@@ -16,6 +16,7 @@ class VisionReceiver:
 
         self.context = zmq.Context()
         self.pose_sub = self.context.socket(zmq.SUB)
+        self.pose_sub.setsockopt(zmq.CONFLATE, 1)
         self.pose_sub.bind(f"tcp://127.0.0.1:{vision_port}")
         self.pose_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
@@ -54,9 +55,9 @@ class VisionReceiver:
         self.image_pub.send_json(md, zmq.SNDMORE)
         self.image_pub.send(rgb_image.tobytes())
 
-    def get_validated_world_pose(self, model: mujoco.MjModel, data: mujoco.MjData, camera_name: str = "depth_camera"):
+    def get_validated_world_pose(self, model: mujoco.MjModel, data: mujoco.MjData, camera_name: str = "d435_camera_frame"):
         """
-        Transforms camera-frame pose (from vision_node) to robot world frame using MuJoCo data.cam_xpos/xmat.
+        Transforms camera-site pose (from vision_node) to robot world frame using MuJoCo data.site_xpos/xmat.
         Returns (pos, quat, is_valid). If no valid vision pose is available, returns (None, None, False).
         """
         if self.obj_pose_cv is None:
@@ -64,38 +65,31 @@ class VisionReceiver:
                 return self.last_good_pos.copy(), self.last_good_quat.copy(), True
             return None, None, False
 
-        cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
-        if cam_id < 0:
-            body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "d435_camera")
-            if body_id >= 0:
-                P_cam_world = data.xpos[body_id]
-                R_cam_world = data.xmat[body_id].reshape(3, 3)
-            else:
-                if self.last_good_pos is not None:
-                    return self.last_good_pos.copy(), self.last_good_quat.copy(), True
-                return None, None, False
+        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, camera_name)
+        if site_id >= 0:
+            P_cam_world = data.site_xpos[site_id]
+            R_cam_world = data.site_xmat[site_id].reshape(3, 3)
         else:
-            P_cam_world = data.cam_xpos[cam_id]
-            R_cam_world = data.cam_xmat[cam_id].reshape(3, 3)
+            cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "depth_camera")
+            if cam_id < 0:
+                body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "d435_camera")
+                if body_id >= 0:
+                    P_cam_world = data.xpos[body_id]
+                    R_cam_world = data.xmat[body_id].reshape(3, 3)
+                else:
+                    if self.last_good_pos is not None:
+                        return self.last_good_pos.copy(), self.last_good_quat.copy(), True
+                    return None, None, False
+            else:
+                P_cam_world = data.cam_xpos[cam_id]
+                R_cam_world = data.cam_xmat[cam_id].reshape(3, 3)
 
-        p_obj_cv = np.array(self.obj_pose_cv["pos"], dtype=np.float32)
-        q_obj_cv = np.array(self.obj_pose_cv["quat"], dtype=np.float32)
-        R_obj_cv = Rotation.from_quat([q_obj_cv[1], q_obj_cv[2], q_obj_cv[3], q_obj_cv[0]]).as_matrix()
-
-        # Transform from OpenCV camera frame (Z forward, Y down, X right) to MuJoCo camera frame (Z back, Y up, X right)
-        R_cv2m = np.array([
-            [1,  0,  0],
-            [0, -1,  0],
-            [0,  0, -1]], dtype=np.float32)
-        p_obj_m = R_cv2m @ p_obj_cv
-        R_obj_m = R_cv2m @ R_obj_cv
+        p_obj_m = np.array(self.obj_pose_cv["pos"], dtype=np.float32)
+        q_obj_m = np.array(self.obj_pose_cv["quat"], dtype=np.float32) # wxyz
+        R_obj_m = Rotation.from_quat([q_obj_m[1], q_obj_m[2], q_obj_m[3], q_obj_m[0]]).as_matrix()
 
         P_world = P_cam_world + R_cam_world @ p_obj_m
         R_world = R_cam_world @ R_obj_m
-
-        if self.last_good_pos is not None:
-            if np.linalg.norm(P_world - self.last_good_pos) > 0.5:
-                return self.last_good_pos.copy(), self.last_good_quat.copy(), True
 
         if self.ema_pos is None:
             self.ema_pos = P_world.copy()

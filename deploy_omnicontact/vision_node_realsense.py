@@ -17,12 +17,14 @@ import numpy as np
 import argparse
 import time
 from scipy.spatial.transform import Rotation
+from pupil_apriltags import Detector
 
 class MultiSourceVisionNode:
-    def __init__(self, mode="usb", cam_id=0, zmq_target="127.0.0.1", show_img=True, box_dims=(0.125, 0.185, 0.215), tag_size=0.122):
+    def __init__(self, mode="usb", cam_id=0, zmq_target="127.0.0.1", show_img=True, box_dims=(0.125, 0.185, 0.215), tag_size=0.1173, fovy=58.76):
         self.mode = mode
         self.show_img = show_img
         self.tag_size = float(tag_size)
+        self.fovy = float(fovy)
         self.hx, self.hy, self.hz = float(box_dims[0]), float(box_dims[1]), float(box_dims[2])
         self.context = zmq.Context()
 
@@ -36,10 +38,11 @@ class MultiSourceVisionNode:
             self.img_sub = self.context.socket(zmq.SUB)
             self.img_sub.connect(f"tcp://{zmq_target}:5555")
             self.img_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-            print(f"[VisionNode] 当前为【MuJoCo仿真相机模式】，监听 tcp://{zmq_target}:5555 ...")
+            print(f"[VisionNode] 当前为【MuJoCo仿真相机模式】，监听 tcp://{zmq_target}:5556 ...")
+            f_sim = 240.0 / np.tan(np.deg2rad(self.fovy / 2.0))
             self.camera_matrix = np.array([
-                [426.5, 0.0, 320.0],
-                [0.0, 426.5, 240.0],
+                [f_sim, 0.0, 320.0],
+                [0.0, f_sim, 240.0],
                 [0.0, 0.0, 1.0]
             ], dtype=np.float32)
             self.dist_coeffs = np.zeros((4, 1), dtype=np.float32)
@@ -75,13 +78,12 @@ class MultiSourceVisionNode:
             ], dtype=np.float32)
             self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
-        try:
-            self.aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_APRILTAG_36h11)
-            self.aruco_params = cv2.aruco.DetectorParameters_create()
-        except AttributeError:
-            self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-            self.aruco_params = cv2.aruco.DetectorParameters()
-            self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        self.detector = Detector(families='tag36h11')
+
+    def rot2quat_wxyz(self, R):
+        r = Rotation.from_matrix(R)
+        q_xyzw = r.as_quat()
+        return float(q_xyzw[3]), float(q_xyzw[0]), float(q_xyzw[1]), float(q_xyzw[2])
 
     def detect_tags(self, gray):
         if hasattr(self, 'detector'):
@@ -172,47 +174,63 @@ class MultiSourceVisionNode:
                 img_bgr = img
 
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-            corners, ids = self.detect_tags(gray)
+            cam_params = [float(self.camera_matrix[0,0]), float(self.camera_matrix[1,1]), float(self.camera_matrix[0,2]), float(self.camera_matrix[1,2])]
+            detections = self.detector.detect(gray, estimate_tag_pose=True, camera_params=cam_params, tag_size=self.tag_size)
             
             poses = {}
-            min_reproj_error = float('inf')
             best_box_pose = None
-
             img_annotated = img_bgr.copy()
 
-            if ids is not None:
-                for i, tag_id in enumerate(ids.flatten()):
-                    if self.show_img:
-                        pts_2d = corners[i][0].astype(int)
-                        cv2.polylines(img_annotated, [pts_2d], True, (0, 255, 0), 2)
-                        cv2.putText(img_annotated, f"AprilTag ID: {tag_id}", tuple(pts_2d[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            T_cv2mj = np.array([
+                [0.0,  0.0,  1.0],
+                [0.0, -1.0,  0.0],
+                [1.0,  0.0,  0.0]
+            ], dtype=np.float32)
 
-                    if tag_id in [0, 2, 3, 4, 5]:
-                        pts_3d = self.get_box_3d_points(tag_id)
-                        if pts_3d is not None:
-                            success, rvec, tvec = cv2.solvePnP(pts_3d, corners[i][0], self.camera_matrix, self.dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
-                            if success:
-                                err, valid = self.check_reprojection_error(pts_3d, corners[i][0], rvec, tvec)
-                                if valid and err < min_reproj_error:
-                                    min_reproj_error = err
-                                    w, x, y, z = self.rvec_to_quat(rvec)
-                                    best_box_pose = {
-                                        "pos": [float(tvec[0][0]), float(tvec[1][0]), float(tvec[2][0])],
-                                        "quat": [float(w), float(x), float(y), float(z)]
-                                    }
-                                    if self.show_img:
-                                        cv2.drawFrameAxes(img_annotated, self.camera_matrix, self.dist_coeffs, rvec, tvec, 0.1)
-                    elif tag_id == 1:
-                        obj_pts_target = np.array([
-                            [self.tag_size/2, -self.tag_size/2, 0], [-self.tag_size/2, -self.tag_size/2, 0], 
-                            [-self.tag_size/2, self.tag_size/2, 0], [self.tag_size/2, self.tag_size/2, 0]
-                        ], dtype=np.float32)
-                        success, rvec, tvec = cv2.solvePnP(obj_pts_target, corners[i][0], self.camera_matrix, self.dist_coeffs)
-                        if success:
-                            err, valid = self.check_reprojection_error(obj_pts_target, corners[i][0], rvec, tvec)
-                            if valid:
-                                w, x, y, z = self.rvec_to_quat(rvec)
-                                poses["tag_1"] = {"pos": [float(tvec[0][0]), float(tvec[1][0]), float(tvec[2][0])], "quat": [float(w), float(x), float(y), float(z)]}
+            T_tag2obj = np.array([
+                [1.0,  0.0,  0.0],
+                [0.0, -1.0,  0.0],
+                [0.0,  0.0, -1.0]
+            ], dtype=np.float32)
+
+            for det in detections:
+                tag_id = det.tag_id
+                if self.show_img:
+                    pts_2d = det.corners.astype(int)
+                    cv2.polylines(img_annotated, [pts_2d], True, (0, 255, 0), 2)
+                    cv2.putText(img_annotated, f"AprilTag ID: {tag_id}", tuple(pts_2d[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+                if tag_id in [0, 2, 3, 4, 5]:
+                    pos_cv = det.pose_t.flatten()
+                    rot_cv = det.pose_R
+                    pos_mj = T_cv2mj @ pos_cv
+                    rot_mj = T_cv2mj @ rot_cv @ np.linalg.inv(T_tag2obj)
+                    if tag_id == 0:
+                        offset_local = np.array([0, 0, -(self.hz + 0.0005)], dtype=np.float32)
+                    elif tag_id == 2:
+                        offset_local = np.array([-(self.hx + 0.0005), 0, 0], dtype=np.float32)
+                    elif tag_id == 3:
+                        offset_local = np.array([+(self.hx + 0.0005), 0, 0], dtype=np.float32)
+                    elif tag_id == 4:
+                        offset_local = np.array([0, -(self.hy + 0.0005), 0], dtype=np.float32)
+                    else: # tag_id == 5
+                        offset_local = np.array([0, +(self.hy + 0.0005), 0], dtype=np.float32)
+                    box_center_mj = pos_mj + rot_mj @ offset_local
+                    w, x, y, z = self.rot2quat_wxyz(rot_mj)
+                    best_box_pose = {
+                        "pos": [float(box_center_mj[0]), float(box_center_mj[1]), float(box_center_mj[2])],
+                        "quat": [w, x, y, z]
+                    }
+                elif tag_id == 1:
+                    pos_cv = det.pose_t.flatten()
+                    rot_cv = det.pose_R
+                    pos_mj = T_cv2mj @ pos_cv
+                    rot_mj = T_cv2mj @ rot_cv
+                    w, x, y, z = self.rot2quat_wxyz(rot_mj)
+                    poses["tag_1"] = {
+                        "pos": [float(pos_mj[0]), float(pos_mj[1]), float(pos_mj[2])],
+                        "quat": [w, x, y, z]
+                    }
 
             if best_box_pose is not None:
                 poses["box"] = best_box_pose
@@ -241,10 +259,11 @@ if __name__ == "__main__":
     parser.add_argument("--cam_id", type=int, default=0, help="标准USB摄像头设备ID")
     parser.add_argument("--zmq_target", type=str, default="127.0.0.1", help="部署端PC的IP")
     parser.add_argument("--box_dims", type=float, nargs=3, default=[0.125, 0.185, 0.215], help="箱子半尺寸 hx hy hz")
-    parser.add_argument("--tag_size", type=float, default=0.122, help="AprilTag 有效检测边界尺寸(米)")
+    parser.add_argument("--tag_size", type=float, default=0.1173, help="AprilTag 有效检测边界尺寸(米)")
+    parser.add_argument("--fovy", type=float, default=58.76, help="MuJoCo 相机垂直视场角 fovy (度)")
     parser.add_argument("--no_show", action="store_true", help="无头模式（关闭预览画面）")
     args = parser.parse_args()
 
     mode = "sim" if args.sim else ("realsense" if args.realsense else "usb")
-    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, show_img=not args.no_show, box_dims=args.box_dims, tag_size=args.tag_size)
+    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, show_img=not args.no_show, box_dims=args.box_dims, tag_size=args.tag_size, fovy=args.fovy)
     node.run()
