@@ -32,7 +32,7 @@
             <freejoint name="box" />
             <inertial pos="0 0 0" mass="2" diaginertia="0.02 0.02 0.02" />
             <geom name="box_geom" type="box" size="0.125 0.185 0.215" rgba="0.8 0.6 0.4 1" friction="0.5 0.005 0.0001" contype="4" conaffinity="3" />
-            <geom name="tag_0" type="box" size="0.03 0.03 0.0005" pos="0 0 0.2155" material="apriltag_mat" mass="0.001" contype="0" conaffinity="0" />
+            <geom name="tag_0" type="box" size="0.075 0.075 0.0005" pos="0 0 0.2155" material="apriltag_mat" mass="0.001" contype="0" conaffinity="0" />
         </body>
         <body name="plane_1_holder" mocap="true" pos="1 1 0.6">
             <geom name="plane_1" class="table_plane" rgba="0.7 0 0 1" />

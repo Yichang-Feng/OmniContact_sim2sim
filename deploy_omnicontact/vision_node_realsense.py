@@ -19,9 +19,10 @@ import time
 from scipy.spatial.transform import Rotation
 
 class MultiSourceVisionNode:
-    def __init__(self, mode="usb", cam_id=0, zmq_target="127.0.0.1", show_img=True, box_dims=(0.125, 0.185, 0.215)):
+    def __init__(self, mode="usb", cam_id=0, zmq_target="127.0.0.1", show_img=True, box_dims=(0.125, 0.185, 0.215), tag_size=0.122):
         self.mode = mode
         self.show_img = show_img
+        self.tag_size = float(tag_size)
         self.hx, self.hy, self.hz = float(box_dims[0]), float(box_dims[1]), float(box_dims[2])
         self.context = zmq.Context()
 
@@ -47,9 +48,9 @@ class MultiSourceVisionNode:
             import pyrealsense2 as rs
             self.pipeline = rs.pipeline()
             self.rs_config = rs.config()
-            self.rs_config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            self.rs_config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
             self.pipeline.start(self.rs_config)
-            print("[VisionNode] 当前为【Intel RealSense物理相机模式】，硬件驱动已就绪！")
+            print("[VisionNode] 当前为【Intel RealSense物理相机模式】，硬件驱动已就绪 (目标帧率: 60Hz)！")
             
             profile = self.pipeline.get_active_profile()
             color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
@@ -65,7 +66,8 @@ class MultiSourceVisionNode:
             self.cap = cv2.VideoCapture(cam_id)
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            print(f"[VisionNode] 当前为【标准USB摄像头模式】 (设备ID={cam_id})")
+            self.cap.set(cv2.CAP_PROP_FPS, 60)
+            print(f"[VisionNode] 当前为【标准USB摄像头模式】 (设备ID={cam_id}, 目标帧率=60Hz)")
             self.camera_matrix = np.array([
                 [610.0, 0.0, 320.0],
                 [0.0, 610.0, 240.0],
@@ -73,7 +75,6 @@ class MultiSourceVisionNode:
             ], dtype=np.float32)
             self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
-        self.tag_size = 0.045
         try:
             self.aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_APRILTAG_36h11)
             self.aruco_params = cv2.aruco.DetectorParameters_create()
@@ -98,7 +99,7 @@ class MultiSourceVisionNode:
     def get_box_3d_points(self, tag_id):
         hx, hy, hz = self.hx, self.hy, self.hz
         s = self.tag_size / 2.0
-        local_corners = np.array([[-s,-s,0], [s,-s,0], [s,s,0], [-s,s,0]], dtype=np.float32)
+        local_corners = np.array([[s,-s,0], [-s,-s,0], [-s,s,0], [s,s,0]], dtype=np.float32)
         
         if tag_id == 0:
             pos = np.array([0, 0, hz + 0.0005])
@@ -144,14 +145,24 @@ class MultiSourceVisionNode:
             return frame if ret else None
 
     def run(self):
-        print("\n<<< 视觉解算循环启动 >>>")
+        print("\n<<< 视觉解算循环启动 (目标频率 >= 50Hz) >>>")
         if self.show_img:
             cv2.namedWindow(f"SUGAR Vision View ({self.mode.upper()})", cv2.WINDOW_AUTOSIZE)
 
+        fps = 0.0
+        last_warn_time = 0
         while True:
+            t0 = time.time()
             img = self.get_frame()
             if img is None:
-                time.sleep(0.005)
+                if time.time() - last_warn_time > 3.0:
+                    print(f"\r[VisionNode] 等待接收图像数据中 (端口 5555)... 请确保已在另一个终端启动: python deploy_omnicontact/deploy_omnicontact.py --task carrybox --use-vision   ", end="", flush=True)
+                    last_warn_time = time.time()
+                if self.show_img:
+                    key = cv2.waitKey(10)
+                    if key & 0xFF == ord('q'):
+                        break
+                time.sleep(0.01)
                 continue
 
             # MuJoCo 仿真传来的是 RGB，转为 BGR 方便 OpenCV 处理与显示
@@ -193,8 +204,8 @@ class MultiSourceVisionNode:
                                         cv2.drawFrameAxes(img_annotated, self.camera_matrix, self.dist_coeffs, rvec, tvec, 0.1)
                     elif tag_id == 1:
                         obj_pts_target = np.array([
-                            [-self.tag_size/2, -self.tag_size/2, 0], [self.tag_size/2, -self.tag_size/2, 0], 
-                            [self.tag_size/2, self.tag_size/2, 0], [-self.tag_size/2, self.tag_size/2, 0]
+                            [self.tag_size/2, -self.tag_size/2, 0], [-self.tag_size/2, -self.tag_size/2, 0], 
+                            [-self.tag_size/2, self.tag_size/2, 0], [self.tag_size/2, self.tag_size/2, 0]
                         ], dtype=np.float32)
                         success, rvec, tvec = cv2.solvePnP(obj_pts_target, corners[i][0], self.camera_matrix, self.dist_coeffs)
                         if success:
@@ -206,11 +217,16 @@ class MultiSourceVisionNode:
             if best_box_pose is not None:
                 poses["box"] = best_box_pose
 
+            dt = time.time() - t0
+            if dt > 0:
+                cur_fps = 1.0 / dt
+                fps = cur_fps if fps == 0 else 0.95 * fps + 0.05 * cur_fps
+
             if poses:
                 self.pose_pub.send_json(poses)
                 if best_box_pose is not None:
                     pos_str = [round(p, 4) for p in best_box_pose['pos']]
-                    print(f"\r[VisionNode] 检测到 AprilTag -> 发布位姿 pos={pos_str}", end="", flush=True)
+                    print(f"\r[VisionNode] ({fps:.1f}Hz) 检测到 AprilTag -> 发布位姿 pos={pos_str}   ", end="", flush=True)
 
             if self.show_img:
                 cv2.imshow(f"SUGAR Vision View ({self.mode.upper()})", img_annotated)
@@ -225,9 +241,10 @@ if __name__ == "__main__":
     parser.add_argument("--cam_id", type=int, default=0, help="标准USB摄像头设备ID")
     parser.add_argument("--zmq_target", type=str, default="127.0.0.1", help="部署端PC的IP")
     parser.add_argument("--box_dims", type=float, nargs=3, default=[0.125, 0.185, 0.215], help="箱子半尺寸 hx hy hz")
+    parser.add_argument("--tag_size", type=float, default=0.122, help="AprilTag 有效检测边界尺寸(米)")
     parser.add_argument("--no_show", action="store_true", help="无头模式（关闭预览画面）")
     args = parser.parse_args()
 
     mode = "sim" if args.sim else ("realsense" if args.realsense else "usb")
-    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, show_img=not args.no_show, box_dims=args.box_dims)
+    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, show_img=not args.no_show, box_dims=args.box_dims, tag_size=args.tag_size)
     node.run()

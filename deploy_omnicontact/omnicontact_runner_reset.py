@@ -85,12 +85,18 @@ class OmniContactResetMixin:
             use_vis = getattr(self.args, "use_vision", False)
             if use_vis and getattr(self, "vision_receiver", None) is not None:
                 v_pos, v_quat, valid = self.vision_receiver.get_validated_world_pose(self.m, self.d)
+                gt_pos = self.d.xpos[active_body_id].copy()
                 if valid and v_pos is not None:
                     self.state_cmd.obj_pos = v_pos
                     self.state_cmd.obj_quat = v_quat
+                    err = float(np.linalg.norm(v_pos - gt_pos))
+                    if getattr(self, "sim_counter", 0) % 40 == 0:
+                        print(f"\r[Vision Compare] 实际GT: [{gt_pos[0]:.3f}, {gt_pos[1]:.3f}, {gt_pos[2]:.3f}] | 解算Est: [{v_pos[0]:.3f}, {v_pos[1]:.3f}, {v_pos[2]:.3f}] | 误差Error: {err*100:.2f} cm   ", end="", flush=True)
                 else:
-                    self.state_cmd.obj_pos = self.d.xpos[active_body_id].copy()
+                    self.state_cmd.obj_pos = gt_pos
                     self.state_cmd.obj_quat = self.d.xquat[active_body_id].copy()
+                    if getattr(self, "sim_counter", 0) % 40 == 0:
+                        print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
             else:
                 self.state_cmd.obj_pos = self.d.xpos[active_body_id].copy()
                 self.state_cmd.obj_quat = self.d.xquat[active_body_id].copy()

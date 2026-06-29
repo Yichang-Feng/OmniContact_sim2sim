@@ -548,12 +548,18 @@ if __name__ == "__main__":
         use_vis = getattr(args, "use_vision", False)
         if use_vis and vision_receiver is not None:
             v_pos, v_quat, valid = vision_receiver.get_validated_world_pose(m, d)
+            gt_pos = d.xpos[box_body_id].copy()
             if valid and v_pos is not None:
                 state_cmd.obj_pos = v_pos
                 state_cmd.obj_quat = v_quat
+                err = float(np.linalg.norm(v_pos - gt_pos))
+                if sim_counter % 40 == 0:
+                    print(f"\r[Vision Compare] 实际GT: [{gt_pos[0]:.3f}, {gt_pos[1]:.3f}, {gt_pos[2]:.3f}] | 解算Est: [{v_pos[0]:.3f}, {v_pos[1]:.3f}, {v_pos[2]:.3f}] | 误差Error: {err*100:.2f} cm   ", end="", flush=True)
             else:
-                state_cmd.obj_pos = d.xpos[box_body_id].copy()
+                state_cmd.obj_pos = gt_pos
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                if sim_counter % 40 == 0:
+                    print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
         else:
             state_cmd.obj_pos = d.xpos[box_body_id].copy()
             state_cmd.obj_quat = d.xquat[box_body_id].copy()
