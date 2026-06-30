@@ -127,6 +127,8 @@ class OmniContactRunner(
             self.policy.carry_box_dims = self._geom_half_dims(
                 "ghost_carry_box_geom",
                 "carry_box_geom",
+                "ghost_box_geom",
+                "box_geom",
                 default=(0.15, 0.15, 0.15),
             )
 

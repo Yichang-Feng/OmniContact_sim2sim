@@ -162,6 +162,8 @@ def infer_policy_dims_from_model(model: mujoco.MjModel, override_dims: np.ndarra
             model,
             "ghost_carry_box_geom",
             "carry_box_geom",
+            "ghost_box_geom",
+            "box_geom",
             default=(0.15, 0.15, 0.15),
         ),
         "stack_box_dims": np.asarray(stack_dims, dtype=np.float32).reshape(3, 3),
