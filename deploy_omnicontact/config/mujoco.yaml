@@ -5,7 +5,7 @@ control_decimation: 4
 task: "carrybox"
 task_choices: ["carrybox", "pushbox-two", "pushbox-in", "slidebox", "slidebox-left", "slidebox-right", "push-carry", "carry-push", "carry-carry", "carry-carry-carry", "stackbox", "relocateball", "kickball", "kickbox"]
 init_pos: [1.0, 0.0, 0.55]
-box_half_dims: [0.125, 0.185, 0.215]
+box_half_dims: [0.125, 0.215, 0.185]
 goal_pos: [3.0, 0.0, 0.26]
 disable_replan: false
 
