@@ -315,6 +315,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Publish rendered sim camera images over ZMQ port 5555 for simulation vision testing.",
     )
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="Deploy to physical Unitree G1 robot over Ethernet DDS instead of simulation.",
+    )
+    parser.add_argument(
+        "--net-if",
+        type=str,
+        default="enx6c1ff724495a",
+        help="Network interface name connected to the robot (e.g., eth0, enp3s0).",
+    )
     args = parser.parse_args()
     args.task = TASK_ALIASES.get(args.task, args.task)
     xml_path = resolve_xml_path(args.task, args.xml_path, config)
@@ -406,7 +417,12 @@ if __name__ == "__main__":
     l_ankle_goal = np.zeros(7, dtype=np.float32)
     r_ankle_goal = np.zeros(7, dtype=np.float32)
     sim_counter = 0
-    
+
+    real_robot = None
+    if getattr(args, "real", False):
+        from real_robot_interface import RealRobotInterface
+        real_robot = RealRobotInterface(net_interface=getattr(args, "net_if", "enx6c1ff724495a"), num_joints=num_joints)
+
     state_cmd = StateAndCmd(num_joints)
     policy_output = PolicyOutput(num_joints)
     FSM_controller = FSM(state_cmd, policy_output)
@@ -701,14 +717,24 @@ if __name__ == "__main__":
         return True, reset_counter
 
     def sync_robot_state():
-        quat = d.qpos[3:7]
-        state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
-        state_cmd.dq = d.qvel[6 : 6 + num_joints].copy()
-        state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
-        state_cmd.base_pos = d.qpos[:3].copy()
-        state_cmd.base_quat = quat.copy()
-        state_cmd.ang_vel = d.qvel[3:6].copy()
-        state_cmd.lin_vel = d.qvel[0:3].copy()
+        if real_robot is not None:
+            res = real_robot.get_robot_state()
+            if res is not None:
+                q, dq, quat, gyro = res
+                state_cmd.q = q.copy()
+                state_cmd.dq = dq.copy()
+                state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
+                state_cmd.base_quat = quat.copy()
+                state_cmd.ang_vel = gyro.copy()
+        else:
+            quat = d.qpos[3:7]
+            state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
+            state_cmd.dq = d.qvel[6 : 6 + num_joints].copy()
+            state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
+            state_cmd.base_pos = d.qpos[:3].copy()
+            state_cmd.base_quat = quat.copy()
+            state_cmd.ang_vel = d.qvel[3:6].copy()
+            state_cmd.lin_vel = d.qvel[0:3].copy()
         sync_object_state()
 
     def set_mocap_pose(mocap_name: str, pose):
@@ -794,19 +820,31 @@ if __name__ == "__main__":
                     l_ankle_goal = policy_output.l_ankle_goal.copy()
                     r_ankle_goal = policy_output.r_ankle_goal.copy()
                     
-                robot_qpos = d.qpos[7 : 7 + num_joints]
-                robot_qvel = d.qvel[6 : 6 + num_joints]
-                tau = pd_control(
-                    policy_output_action,
-                    robot_qpos,
-                    kps,
-                    np.zeros_like(kps),
-                    robot_qvel,
-                    kds,
-                    torque_limit_mj=torque_limit_mj,
-                )
-                d.ctrl[:] = tau
-                mujoco.mj_step(m, d)
+                if real_robot is not None:
+                    real_robot.send_joint_commands(
+                        policy_output_action,
+                        kps,
+                        kds,
+                    )
+                    robot_qpos = state_cmd.q
+                    robot_qvel = state_cmd.dq
+                    tau = pd_control(policy_output_action, robot_qpos, kps, np.zeros_like(kps), robot_qvel, kds, torque_limit_mj=torque_limit_mj)
+                    d.ctrl[:] = tau
+                    mujoco.mj_step(m, d)
+                else:
+                    robot_qpos = d.qpos[7 : 7 + num_joints]
+                    robot_qvel = d.qvel[6 : 6 + num_joints]
+                    tau = pd_control(
+                        policy_output_action,
+                        robot_qpos,
+                        kps,
+                        np.zeros_like(kps),
+                        robot_qvel,
+                        kds,
+                        torque_limit_mj=torque_limit_mj,
+                    )
+                    d.ctrl[:] = tau
+                    mujoco.mj_step(m, d)
                 if sim_renderer is not None and vision_receiver is not None:
                     sim_renderer.update_scene(d, camera="depth_camera")
                     rgb_img = sim_renderer.render()

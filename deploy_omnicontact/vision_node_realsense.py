@@ -20,7 +20,7 @@ from scipy.spatial.transform import Rotation
 from pupil_apriltags import Detector
 
 class MultiSourceVisionNode:
-    def __init__(self, mode="usb", cam_id=0, zmq_target="127.0.0.1", show_img=True, box_dims=(0.125, 0.215, 0.185), tag_size=0.1, fovy=58.76):
+    def __init__(self, mode="usb", cam_id=0, zmq_target="127.168.123.164", show_img=True, box_dims=(0.125, 0.215, 0.185), tag_size=0.1, fovy=58.76):
         self.mode = mode
         self.show_img = show_img
         self.tag_size = float(tag_size)
@@ -274,7 +274,10 @@ class MultiSourceVisionNode:
                 self.pose_pub.send_json(poses)
                 if best_box_pose is not None:
                     pos_str = [round(p, 4) for p in best_box_pose['pos']]
-                    print(f"\r[VisionNode] ({fps:.1f}Hz) 检测到 AprilTag -> 发布位姿 pos={pos_str}   ", end="", flush=True)
+                    P_cam_ref = np.array([0.0684, 0.0175, 1.2804])
+                    R_cam_ref = np.array([[0.6743, 0.7385, 0.0], [0.0, 0.0, -1.0], [-0.7385, 0.6743, 0.0]])
+                    w_pos = [round(v, 4) for v in (P_cam_ref + R_cam_ref @ np.array(best_box_pose['pos']))]
+                    print(f"\r[VisionNode] ({fps:.5f}Hz) 相机位姿:{pos_str} | 相对机器人底座:{w_pos}   ", end="", flush=True)
 
             if self.show_img:
                 cv2.imshow(f"SUGAR Vision View ({self.mode.upper()})", img_annotated)
