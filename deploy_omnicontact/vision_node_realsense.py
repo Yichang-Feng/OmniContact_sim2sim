@@ -19,12 +19,21 @@ import time
 from scipy.spatial.transform import Rotation
 from pupil_apriltags import Detector
 
+try:
+    from deploy_omnicontact.box_tag_config import BOX_HALF_DIMS as _CFG_DIMS, TAG_SIZE as _CFG_TAG, TAG_LAYOUT as _CFG_LAYOUT
+except ImportError:
+    try:
+        from box_tag_config import BOX_HALF_DIMS as _CFG_DIMS, TAG_SIZE as _CFG_TAG, TAG_LAYOUT as _CFG_LAYOUT
+    except ImportError:
+        _CFG_DIMS, _CFG_TAG, _CFG_LAYOUT = (0.215, 0.185, 0.125), 0.1, "1tag"
+
 class MultiSourceVisionNode:
-    def __init__(self, mode="usb", cam_id=0, zmq_target="127.168.123.164", show_img=True, box_dims=(0.125, 0.215, 0.185), tag_size=0.1, fovy=58.76):
+    def __init__(self, mode="usb", cam_id=0, zmq_target="127.168.123.164", show_img=True, box_dims=_CFG_DIMS, tag_size=_CFG_TAG, fovy=58.76, tag_layout=_CFG_LAYOUT):
         self.mode = mode
         self.show_img = show_img
         self.tag_size = float(tag_size)
         self.fovy = float(fovy)
+        self.tag_layout = tag_layout
         self.hx, self.hy, self.hz = float(box_dims[0]), float(box_dims[1]), float(box_dims[2])
         self.context = zmq.Context()
 
@@ -110,25 +119,42 @@ class MultiSourceVisionNode:
         s = self.tag_size / 2.0
         local_corners = np.array([[s,-s,0], [-s,-s,0], [-s,s,0], [s,s,0]], dtype=np.float32)
         
-        if tag_id in [0, 582]:
-            pos = np.array([0, 0, hz + 0.0005])
-            R = Rotation.from_euler('xyz', [0, 0, 0], degrees=True).as_matrix()
-        elif tag_id == 2:
-            pos = np.array([hx + 0.0005, 0, 0])
-            R = Rotation.from_euler('xyz', [0, 90, 0], degrees=True).as_matrix()
-        elif tag_id == 3:
-            pos = np.array([-hx - 0.0005, 0, 0])
-            R = Rotation.from_euler('xyz', [0, -90, 0], degrees=True).as_matrix()
-        elif tag_id == 4:
-            pos = np.array([0, hy + 0.0005, 0])
-            R = Rotation.from_euler('xyz', [-90, 0, 0], degrees=True).as_matrix()
-        elif tag_id == 5:
-            pos = np.array([0, -hy - 0.0005, 0])
-            R = Rotation.from_euler('xyz', [90, 0, 0], degrees=True).as_matrix()
+        if self.tag_layout == "4tag":
+            dx, dy = hx - s, hy - s
+            if tag_id == 1:
+                pos = np.array([dx, dy, hz + 0.0005])
+                R = Rotation.from_euler('xyz', [0, 0, 0], degrees=True).as_matrix()
+            elif tag_id == 2:
+                pos = np.array([-dx, dy, hz + 0.0005])
+                R = Rotation.from_euler('xyz', [0, 0, 0], degrees=True).as_matrix()
+            elif tag_id == 3:
+                pos = np.array([-dx, -dy, hz + 0.0005])
+                R = Rotation.from_euler('xyz', [0, 0, 0], degrees=True).as_matrix()
+            elif tag_id == 4:
+                pos = np.array([dx, -dy, hz + 0.0005])
+                R = Rotation.from_euler('xyz', [0, 0, 0], degrees=True).as_matrix()
+            else:
+                return None
+            return (R @ local_corners.T).T + pos
         else:
-            return None
-            
-        return (R @ local_corners.T).T + pos
+            if tag_id in [0, 582]:
+                pos = np.array([0, 0, hz + 0.0005])
+                R = Rotation.from_euler('xyz', [0, 0, 0], degrees=True).as_matrix()
+            elif tag_id == 2:
+                pos = np.array([hx + 0.0005, 0, 0])
+                R = Rotation.from_euler('xyz', [0, 90, 0], degrees=True).as_matrix()
+            elif tag_id == 3:
+                pos = np.array([-hx - 0.0005, 0, 0])
+                R = Rotation.from_euler('xyz', [0, -90, 0], degrees=True).as_matrix()
+            elif tag_id == 4:
+                pos = np.array([0, hy + 0.0005, 0])
+                R = Rotation.from_euler('xyz', [-90, 0, 0], degrees=True).as_matrix()
+            elif tag_id == 5:
+                pos = np.array([0, -hy - 0.0005, 0])
+                R = Rotation.from_euler('xyz', [90, 0, 0], degrees=True).as_matrix()
+            else:
+                return None
+            return (R @ local_corners.T).T + pos
 
     def check_reprojection_error(self, obj_points, img_points, rvec, tvec):
         projected, _ = cv2.projectPoints(obj_points, rvec, tvec, self.camera_matrix, self.dist_coeffs)
@@ -189,7 +215,8 @@ class MultiSourceVisionNode:
 
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             cam_params = [float(self.camera_matrix[0,0]), float(self.camera_matrix[1,1]), float(self.camera_matrix[0,2]), float(self.camera_matrix[1,2])]
-            detections = list(self.detector.detect(gray, estimate_tag_pose=True, camera_params=cam_params, tag_size=self.tag_size))
+            eff_tag_size = self.tag_size * 0.8 if self.tag_layout == "4tag" else self.tag_size
+            detections = list(self.detector.detect(gray, estimate_tag_pose=True, camera_params=cam_params, tag_size=eff_tag_size))
 
             # 兼容 ArUco (如 Original ArUco 生成的 ID 582) 检测与解算
             if hasattr(self, 'aruco_detector') and self.aruco_detector is not None:
@@ -227,6 +254,20 @@ class MultiSourceVisionNode:
                 [0.0,  0.0, -1.0]
             ], dtype=np.float32)
 
+            box_pos_list = []
+            box_rot_list = []
+
+            if self.tag_layout == "4tag":
+                dx = self.hx - self.tag_size / 2.0
+                dy = self.hy - self.tag_size / 2.0
+                dz = self.hz + 0.0005
+                offsets_4tag = {
+                    1: np.array([-dx, dy, dz], dtype=np.float32),
+                    2: np.array([dx, dy, dz], dtype=np.float32),
+                    3: np.array([dx, -dy, dz], dtype=np.float32),
+                    4: np.array([-dx, -dy, dz], dtype=np.float32),
+                }
+
             for det in detections:
                 tag_id = det.tag_id
                 if self.show_img:
@@ -234,33 +275,58 @@ class MultiSourceVisionNode:
                     cv2.polylines(img_annotated, [pts_2d], True, (0, 255, 0), 2)
                     cv2.putText(img_annotated, f"AprilTag ID: {tag_id}", tuple(pts_2d[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-                if tag_id in [0, 582, 2, 3, 4, 5]:
-                    pos_cv = det.pose_t.flatten()
-                    rot_cv = det.pose_R
-                    rot_mj = T_cv2mj @ rot_cv @ np.linalg.inv(T_tag2obj)
-                    if tag_id in [0, 582]:
-                        offset_tag = np.array([0, 0, -(self.hz + 0.0005)], dtype=np.float32)
-                    elif tag_id in [2, 3]:
-                        offset_tag = np.array([0, 0, -(self.hx + 0.0005)], dtype=np.float32)
-                    else: # tag_id in [4, 5]
-                        offset_tag = np.array([0, 0, -(self.hy + 0.0005)], dtype=np.float32)
-                    pos_cv_box = pos_cv + rot_cv @ offset_tag
-                    box_center_mj = T_cv2mj @ pos_cv_box
-                    w, x, y, z = self.rot2quat_wxyz(rot_mj)
-                    best_box_pose = {
-                        "pos": [float(box_center_mj[0]), float(box_center_mj[1]), float(box_center_mj[2])],
-                        "quat": [w, x, y, z]
-                    }
-                elif tag_id == 1:
-                    pos_cv = det.pose_t.flatten()
-                    rot_cv = det.pose_R
-                    pos_mj = T_cv2mj @ pos_cv
-                    rot_mj = T_cv2mj @ rot_cv
-                    w, x, y, z = self.rot2quat_wxyz(rot_mj)
-                    poses["tag_1"] = {
-                        "pos": [float(pos_mj[0]), float(pos_mj[1]), float(pos_mj[2])],
-                        "quat": [w, x, y, z]
-                    }
+                if self.tag_layout == "4tag":
+                    if tag_id in [1, 2, 3, 4]:
+                        pos_cv = det.pose_t.flatten()
+                        rot_cv = det.pose_R
+                        rot_mj = T_cv2mj @ rot_cv @ np.linalg.inv(T_tag2obj)
+                        offset_tag = offsets_4tag[tag_id]
+                        pos_cv_box = pos_cv + rot_cv @ offset_tag
+                        box_center_mj = T_cv2mj @ pos_cv_box
+                        box_pos_list.append(box_center_mj)
+                        box_rot_list.append(rot_mj)
+                else:
+                    if tag_id in [0, 582, 2, 3, 4, 5]:
+                        pos_cv = det.pose_t.flatten()
+                        rot_cv = det.pose_R
+                        rot_mj = T_cv2mj @ rot_cv @ np.linalg.inv(T_tag2obj)
+                        if tag_id in [0, 582]:
+                            offset_tag = np.array([0, 0, -(self.hz + 0.0005)], dtype=np.float32)
+                        elif tag_id in [2, 3]:
+                            offset_tag = np.array([0, 0, -(self.hx + 0.0005)], dtype=np.float32)
+                        else: # tag_id in [4, 5]
+                            offset_tag = np.array([0, 0, -(self.hy + 0.0005)], dtype=np.float32)
+                        pos_cv_box = pos_cv + rot_cv @ offset_tag
+                        box_center_mj = T_cv2mj @ pos_cv_box
+                        w, x, y, z = self.rot2quat_wxyz(rot_mj)
+                        best_box_pose = {
+                            "pos": [float(box_center_mj[0]), float(box_center_mj[1]), float(box_center_mj[2])],
+                            "quat": [w, x, y, z]
+                        }
+                    elif tag_id == 1:
+                        pos_cv = det.pose_t.flatten()
+                        rot_cv = det.pose_R
+                        pos_mj = T_cv2mj @ pos_cv
+                        rot_mj = T_cv2mj @ rot_cv
+                        w, x, y, z = self.rot2quat_wxyz(rot_mj)
+                        poses["tag_1"] = {
+                            "pos": [float(pos_mj[0]), float(pos_mj[1]), float(pos_mj[2])],
+                            "quat": [w, x, y, z]
+                        }
+
+            if self.tag_layout == "4tag" and len(box_pos_list) > 0:
+                avg_pos = np.mean(box_pos_list, axis=0)
+                avg_rot = np.mean(box_rot_list, axis=0)
+                U, _, Vt = np.linalg.svd(avg_rot)
+                best_rot_matrix = U @ Vt
+                if np.linalg.det(best_rot_matrix) < 0:
+                    U[:, -1] *= -1
+                    best_rot_matrix = U @ Vt
+                w, x, y, z = self.rot2quat_wxyz(best_rot_matrix)
+                best_box_pose = {
+                    "pos": [float(avg_pos[0]), float(avg_pos[1]), float(avg_pos[2])],
+                    "quat": [w, x, y, z]
+                }
 
             if best_box_pose is not None:
                 poses["box"] = best_box_pose
@@ -291,12 +357,13 @@ if __name__ == "__main__":
     parser.add_argument("--realsense", action="store_true", help="切换至 Intel RealSense 物理相机源")
     parser.add_argument("--cam_id", type=int, default=0, help="标准USB摄像头设备ID")
     parser.add_argument("--zmq_target", type=str, default="127.0.0.1", help="部署端PC的IP")
-    parser.add_argument("--box_dims", type=float, nargs=3, default=[0.125, 0.215, 0.185], help="箱子半尺寸 hx hy hz")
-    parser.add_argument("--tag_size", type=float, default=0.1, help="AprilTag 有效检测边界尺寸(米)")
+    parser.add_argument("--box_dims", type=float, nargs=3, default=list(_CFG_DIMS), help="箱子半尺寸 hx hy hz")
+    parser.add_argument("--tag_size", type=float, default=_CFG_TAG, help="AprilTag 有效检测边界尺寸(米)")
     parser.add_argument("--fovy", type=float, default=58.76, help="MuJoCo 相机垂直视场角 fovy (度)")
+    parser.add_argument("--tag_layout", type=str, default=_CFG_LAYOUT, choices=["1tag", "4tag"], help="标签布局方案：1tag为单标签方案，4tag为顶部四角4标签方案")
     parser.add_argument("--no_show", action="store_true", help="无头模式（关闭预览画面）")
     args = parser.parse_args()
 
     mode = "sim" if args.sim else ("realsense" if args.realsense else "usb")
-    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, show_img=not args.no_show, box_dims=args.box_dims, tag_size=args.tag_size, fovy=args.fovy)
+    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, show_img=not args.no_show, box_dims=args.box_dims, tag_size=args.tag_size, fovy=args.fovy, tag_layout=args.tag_layout)
     node.run()
