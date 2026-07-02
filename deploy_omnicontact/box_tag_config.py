@@ -105,6 +105,12 @@ def sync_all(target_layout=None):
             new_asset = f'        <texture name="apriltag_tex" type="2d" file="{TAG_TEXTURE_FILE}" />\n        <material name="apriltag_mat" texture="apriltag_tex" specular="0" shininess="0" />'
             new_tags = f'            <geom name="tag_0" type="box" size="{tag_half_s:.4f} {tag_half_s:.4f} 0.0005" pos="0 0 {tag_pos_z:.4f}" material="apriltag_mat" mass="0.001" contype="0" conaffinity="0" />'
 
+        goal_asset = (
+            '\n        <texture name="apriltag_tex_5" type="2d" file="../data/tag36_11_00005.png" />\n'
+            '        <material name="apriltag_mat_5" texture="apriltag_tex_5" specular="0" shininess="0" />'
+        )
+        new_asset += goal_asset
+
         content = re.sub(
             r'(<material\s+name="groundplane"[^>]*>)\s*(.*?)\s*(</asset>)',
             r'\1\n' + new_asset + r'\n    \3',
@@ -116,6 +122,15 @@ def sync_all(target_layout=None):
             r'\1\n' + new_tags + r'\n        \3',
             content,
             flags=re.DOTALL,
+        )
+        goal_tag_geom = (
+            '            <geom name="plane_2" class="table_plane" rgba="0 0.7 0 1" />\n'
+            f'            <geom name="tag_5" type="box" size="{tag_half_s:.4f} {tag_half_s:.4f} 0.0005" pos="0 0 0.0105" material="apriltag_mat_5" contype="0" conaffinity="0" />'
+        )
+        content = re.sub(
+            r'<geom\s+name="plane_2"\s+[^>]*/>(?:\s*<geom\s+name="tag_5"[^>]*/>)?',
+            goal_tag_geom,
+            content,
         )
 
         with open(xml_path, "w", encoding="utf-8") as f:

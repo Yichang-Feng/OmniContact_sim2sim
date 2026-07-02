@@ -275,7 +275,19 @@ class MultiSourceVisionNode:
                     cv2.polylines(img_annotated, [pts_2d], True, (0, 255, 0), 2)
                     cv2.putText(img_annotated, f"AprilTag ID: {tag_id}", tuple(pts_2d[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-                if self.tag_layout == "4tag":
+                if tag_id == 5:
+                    pos_cv = det.pose_t.flatten()
+                    rot_cv = det.pose_R
+                    rot_mj = T_cv2mj @ rot_cv @ np.linalg.inv(T_tag2obj)
+                    offset_goal = np.array([0.0, 0.0, -(self.hz - 0.0055)], dtype=np.float32)
+                    pos_cv_goal = pos_cv + rot_cv @ offset_goal
+                    goal_center_mj = T_cv2mj @ pos_cv_goal
+                    w, x, y, z = self.rot2quat_wxyz(rot_mj)
+                    poses["goal"] = {
+                        "pos": [float(goal_center_mj[0]), float(goal_center_mj[1]), float(goal_center_mj[2])],
+                        "quat": [w, x, y, z]
+                    }
+                elif self.tag_layout == "4tag":
                     if tag_id in [1, 2, 3, 4]:
                         pos_cv = det.pose_t.flatten()
                         rot_cv = det.pose_R
@@ -286,7 +298,7 @@ class MultiSourceVisionNode:
                         box_pos_list.append(box_center_mj)
                         box_rot_list.append(rot_mj)
                 else:
-                    if tag_id in [0, 582, 2, 3, 4, 5]:
+                    if tag_id in [0, 582, 2, 3, 4]:
                         pos_cv = det.pose_t.flatten()
                         rot_cv = det.pose_R
                         rot_mj = T_cv2mj @ rot_cv @ np.linalg.inv(T_tag2obj)
@@ -294,7 +306,7 @@ class MultiSourceVisionNode:
                             offset_tag = np.array([0, 0, -(self.hz + 0.0005)], dtype=np.float32)
                         elif tag_id in [2, 3]:
                             offset_tag = np.array([0, 0, -(self.hx + 0.0005)], dtype=np.float32)
-                        else: # tag_id in [4, 5]
+                        else: # tag_id == 4
                             offset_tag = np.array([0, 0, -(self.hy + 0.0005)], dtype=np.float32)
                         pos_cv_box = pos_cv + rot_cv @ offset_tag
                         box_center_mj = T_cv2mj @ pos_cv_box

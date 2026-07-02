@@ -20,6 +20,8 @@ class RealRobotInterface:
         
         self.num_joints = num_joints
         self.low_state = None
+        self.odo_state = None
+        self.sport_state = None
         self.last_state_time = 0.0
         self.crc_calculator = CRC()
 
@@ -29,6 +31,19 @@ class RealRobotInterface:
         self.sub = ChannelSubscriber("rt/lowstate", LowState_)
         self.sub.Init(self._state_handler, 10)
 
+        try:
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import OdoState_
+            self.odo_sub = ChannelSubscriber("rt/odostate", OdoState_)
+            self.odo_sub.Init(self._odo_handler, 10)
+        except Exception:
+            pass
+        try:
+            from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+            self.sport_sub = ChannelSubscriber("rt/odommodestate", SportModeState_)
+            self.sport_sub.Init(self._sport_handler, 10)
+        except Exception:
+            pass
+
         self.pub = ChannelPublisher("rt/lowcmd", LowCmd_)
         self.pub.Init()
         print("[RealRobotInterface] DDS订阅与发布通道初始化完成！等待底层反馈包...")
@@ -36,6 +51,12 @@ class RealRobotInterface:
     def _state_handler(self, msg: LowState_):
         self.low_state = msg
         self.last_state_time = time.time()
+
+    def _odo_handler(self, msg):
+        self.odo_state = msg
+
+    def _sport_handler(self, msg):
+        self.sport_state = msg
 
     def wait_for_connection(self, timeout=5.0):
         start = time.time()
@@ -54,6 +75,8 @@ class RealRobotInterface:
             dq: np.ndarray (num_joints,)
             quat: np.ndarray (4,) wxyz format
             gyro: np.ndarray (3,)
+            base_pos: np.ndarray (3,) world position
+            lin_vel: np.ndarray (3,) world linear velocity
         """
         if self.low_state is None:
             return None
@@ -67,7 +90,17 @@ class RealRobotInterface:
         quat = np.array(raw_q, dtype=np.float32)
         gyro = np.array(ls.imu_state.gyroscope, dtype=np.float32)
 
-        return q, dq, quat, gyro
+        if self.odo_state is not None:
+            base_pos = np.array(self.odo_state.position[:3], dtype=np.float32)
+            lin_vel = np.array(self.odo_state.linear_velocity[:3], dtype=np.float32)
+        elif self.sport_state is not None:
+            base_pos = np.array(self.sport_state.position[:3], dtype=np.float32)
+            lin_vel = np.array(self.sport_state.velocity[:3], dtype=np.float32)
+        else:
+            base_pos = np.zeros(3, dtype=np.float32)
+            lin_vel = np.zeros(3, dtype=np.float32)
+
+        return q, dq, quat, gyro, base_pos, lin_vel
 
     def send_joint_commands(self, target_q, kps, kds, target_dq=None, tau_ff=None):
         if target_dq is None:

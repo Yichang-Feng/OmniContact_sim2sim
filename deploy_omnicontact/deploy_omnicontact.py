@@ -566,6 +566,17 @@ if __name__ == "__main__":
         use_vis = getattr(args, "use_vision", False)
         if use_vis and vision_receiver is not None:
             v_pos, v_quat, valid = vision_receiver.get_validated_world_pose(m, d)
+            g_pos, valid_goal = vision_receiver.get_validated_goal_pose(m, d)
+            if valid_goal and g_pos is not None:
+                goal_pos[:] = g_pos
+                if hasattr(contactflow_policy, "goal_pos"):
+                    contactflow_policy.goal_pos[:] = g_pos
+                if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
+                    contactflow_policy.goal_pos_override[:] = g_pos
+                table_z_offset = float(contactflow_policy.box_dims[2]) + 0.005
+                table_offset = np.array([0.0, 0.0, table_z_offset], dtype=np.float32)
+                set_table_positions(init_pos - table_offset, goal_pos - table_offset)
+
             gt_pos = d.xpos[box_body_id].copy()
             if valid and v_pos is not None:
                 state_cmd.obj_pos = v_pos
@@ -720,12 +731,22 @@ if __name__ == "__main__":
         if real_robot is not None:
             res = real_robot.get_robot_state()
             if res is not None:
-                q, dq, quat, gyro = res
+                q, dq, quat, gyro, base_pos, lin_vel = res
                 state_cmd.q = q.copy()
                 state_cmd.dq = dq.copy()
                 state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
+                state_cmd.base_pos = base_pos.copy()
                 state_cmd.base_quat = quat.copy()
                 state_cmd.ang_vel = gyro.copy()
+                state_cmd.lin_vel = lin_vel.copy()
+
+                d.qpos[:3] = base_pos
+                d.qpos[3:7] = quat
+                d.qpos[7 : 7 + num_joints] = q
+                d.qvel[:3] = lin_vel
+                d.qvel[3:6] = gyro
+                d.qvel[6 : 6 + num_joints] = dq
+                mujoco.mj_forward(m, d)
         else:
             quat = d.qpos[3:7]
             state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
@@ -830,7 +851,7 @@ if __name__ == "__main__":
                     robot_qvel = state_cmd.dq
                     tau = pd_control(policy_output_action, robot_qpos, kps, np.zeros_like(kps), robot_qvel, kds, torque_limit_mj=torque_limit_mj)
                     d.ctrl[:] = tau
-                    mujoco.mj_step(m, d)
+                    mujoco.mj_forward(m, d)
                 else:
                     robot_qpos = d.qpos[7 : 7 + num_joints]
                     robot_qvel = d.qvel[6 : 6 + num_joints]

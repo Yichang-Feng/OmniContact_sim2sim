@@ -19,6 +19,8 @@
         <material name="apriltag_mat_3" texture="apriltag_tex_3" specular="0" shininess="0" />
         <texture name="apriltag_tex_4" type="2d" file="../data/tag36_11_00004.png" />
         <material name="apriltag_mat_4" texture="apriltag_tex_4" specular="0" shininess="0" />
+        <texture name="apriltag_tex_5" type="2d" file="../data/tag36_11_00005.png" />
+        <material name="apriltag_mat_5" texture="apriltag_tex_5" specular="0" shininess="0" />
     </asset>
     <default>
         <default class="table_plane">
@@ -47,7 +49,8 @@
             <geom name="plane_1" class="table_plane" rgba="0.7 0 0 1" />
         </body>
         <body name="plane_2_holder" mocap="true" pos="1 1 0.4">
-            <geom name="plane_2" class="table_plane" rgba="0 0.7 0 1" />
+                                    <geom name="plane_2" class="table_plane" rgba="0 0.7 0 1" />
+            <geom name="tag_5" type="box" size="0.0500 0.0500 0.0005" pos="0 0 0.0105" material="apriltag_mat_5" contype="0" conaffinity="0" />
         </body>
         <body name="ghost_box">
             <freejoint name="ghost_box_joint" />
