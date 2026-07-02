@@ -28,7 +28,7 @@ except ImportError:
         _CFG_DIMS, _CFG_TAG, _CFG_LAYOUT = (0.215, 0.185, 0.125), 0.1, "1tag"
 
 class MultiSourceVisionNode:
-    def __init__(self, mode="usb", cam_id=0, zmq_target="127.168.123.164", show_img=True, box_dims=_CFG_DIMS, tag_size=_CFG_TAG, fovy=58.76, tag_layout=_CFG_LAYOUT):
+    def __init__(self, mode="usb", cam_id=0, zmq_target="127.0.0.1", cam_ip="192.168.123.164", show_img=True, box_dims=_CFG_DIMS, tag_size=_CFG_TAG, fovy=58.76, tag_layout=_CFG_LAYOUT):
         self.mode = mode
         self.show_img = show_img
         self.tag_size = float(tag_size)
@@ -43,19 +43,29 @@ class MultiSourceVisionNode:
         print(f"[VisionNode] 解算位姿发布信道已就绪 -> tcp://{zmq_target}:5556")
 
         # 根据不同模式初始化相机源
-        if self.mode == "sim":
+        if self.mode in ["sim", "stream"]:
+            cam_addr = f"{zmq_target}:5555" if self.mode == "sim" else f"{cam_ip}:5555"
             self.img_sub = self.context.socket(zmq.SUB)
             self.img_sub.setsockopt(zmq.RCVHWM, 2)
-            self.img_sub.connect(f"tcp://{zmq_target}:5555")
+            self.img_sub.connect(f"tcp://{cam_addr}")
             self.img_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-            print(f"[VisionNode] 当前为【MuJoCo仿真相机模式】，监听 tcp://{zmq_target}:5556 ...")
-            f_sim = 240.0 / np.tan(np.deg2rad(self.fovy / 2.0))
-            self.camera_matrix = np.array([
-                [f_sim, 0.0, 320.0],
-                [0.0, f_sim, 240.0],
-                [0.0, 0.0, 1.0]
-            ], dtype=np.float32)
-            self.dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+            mode_name = "MuJoCo仿真相机模式" if self.mode == "sim" else "实机网络推流模式"
+            print(f"[VisionNode] 当前为【{mode_name}】，监听 tcp://{cam_addr} ...")
+            if self.mode == "sim":
+                f_sim = 240.0 / np.tan(np.deg2rad(self.fovy / 2.0))
+                self.camera_matrix = np.array([
+                    [f_sim, 0.0, 320.0],
+                    [0.0, f_sim, 240.0],
+                    [0.0, 0.0, 1.0]
+                ], dtype=np.float32)
+                self.dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+            else: # stream 模式下填入实机实测 RealSense (1280x720) 内参
+                self.camera_matrix = np.array([
+                    [911.4385, 0.0, 646.4236],
+                    [0.0, 912.9034, 382.7312],
+                    [0.0, 0.0, 1.0]
+                ], dtype=np.float32)
+                self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
         elif self.mode == "realsense":
             import pyrealsense2 as rs
@@ -63,7 +73,7 @@ class MultiSourceVisionNode:
             self.rs_config = rs.config()
             self.rs_config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
             self.pipeline.start(self.rs_config)
-            print("[VisionNode] 当前为【Intel RealSense物理相机模式】，硬件驱动已就绪 (目标帧率: 60Hz)！")
+            print("[VisionNode] 当前为【Intel RealSense物理相机模式】，硬件驱动已就绪 (帧率: 60Hz)")
             
             profile = self.pipeline.get_active_profile()
             color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
@@ -80,7 +90,7 @@ class MultiSourceVisionNode:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.cap.set(cv2.CAP_PROP_FPS, 60)
-            print(f"[VisionNode] 当前为【标准USB摄像头模式】 (设备ID={cam_id}, 目标帧率=60Hz)")
+            print(f"[VisionNode] 当前为【标准USB摄像头模式】 (设备ID={cam_id}, 帧率=60Hz)")
             self.camera_matrix = np.array([
                 [610.0, 0.0, 320.0],
                 [0.0, 610.0, 240.0],
@@ -163,7 +173,7 @@ class MultiSourceVisionNode:
         return mean_err, mean_err < 25.0
 
     def get_frame(self):
-        if self.mode == "sim":
+        if self.mode in ["sim", "stream"]:
             latest_md = None
             latest_msg = None
             while True:
@@ -198,7 +208,8 @@ class MultiSourceVisionNode:
             img = self.get_frame()
             if img is None:
                 if time.time() - last_warn_time > 3.0:
-                    print(f"\r[VisionNode] 等待接收图像数据中 (端口 5555)... 请确保已在另一个终端启动: python deploy_omnicontact/deploy_omnicontact.py --task carrybox --use-vision   ", end="", flush=True)
+                    hint = "请确保实机 stream_cam.py 已运行并推流" if self.mode == "stream" else "请确保已启动: python deploy_omnicontact/deploy_omnicontact.py --use-vision"
+                    print(f"\r[VisionNode] 等待接收图像数据中 (源={self.mode}, 端口 5555)... {hint}   ", end="", flush=True)
                     last_warn_time = time.time()
                 if self.show_img:
                     key = cv2.waitKey(10)
@@ -212,6 +223,16 @@ class MultiSourceVisionNode:
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             else:
                 img_bgr = img
+                if self.mode == "stream" and not hasattr(self, '_stream_init_w'):
+                    h, w = img_bgr.shape[:2]
+                    scale_x, scale_y = w / 1280.0, h / 720.0
+                    self.camera_matrix[0, 0] = 911.4385 * scale_x
+                    self.camera_matrix[1, 1] = 912.9034 * scale_y
+                    self.camera_matrix[0, 2] = 646.4236 * scale_x
+                    self.camera_matrix[1, 2] = 382.7312 * scale_y
+                    self._stream_init_w = w
+                    print(f"\n[VisionNode] 成功接收 ZMQ 画面！当前推流分辨率: [{w}x{h}]，自适应精准内参: fx={self.camera_matrix[0,0]:.2f}, fy={self.camera_matrix[1,1]:.2f}\n")
+
 
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             cam_params = [float(self.camera_matrix[0,0]), float(self.camera_matrix[1,1]), float(self.camera_matrix[0,2]), float(self.camera_matrix[1,2])]
@@ -352,7 +373,7 @@ class MultiSourceVisionNode:
                 self.pose_pub.send_json(poses)
                 if best_box_pose is not None:
                     pos_str = [round(p, 4) for p in best_box_pose['pos']]
-                    P_cam_ref = np.array([0.0684, 0.0175, 1.2804])
+                    P_cam_ref = np.array([0.0684, 0.0175, 1.35])
                     R_cam_ref = np.array([[0.6743, 0.7385, 0.0], [0.0, 0.0, -1.0], [-0.7385, 0.6743, 0.0]])
                     w_pos = [round(v, 4) for v in (P_cam_ref + R_cam_ref @ np.array(best_box_pose['pos']))]
                     print(f"\r[VisionNode] ({fps:.5f}Hz) 相机位姿:{pos_str} | 相对机器人底座:{w_pos}   ", end="", flush=True)
@@ -366,9 +387,11 @@ class MultiSourceVisionNode:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--sim", action="store_true", help="切换至 MuJoCo 仿真深度相机源")
-    parser.add_argument("--realsense", action="store_true", help="切换至 Intel RealSense 物理相机源")
+    parser.add_argument("--realsense", action="store_true", help="切换至本机的 Intel RealSense 物理相机源")
+    parser.add_argument("--stream", action="store_true", help="切换至网络推流接收模式 (通过 ZMQ 端口 5555 接收机器端发回的图像帧)")
     parser.add_argument("--cam_id", type=int, default=0, help="标准USB摄像头设备ID")
-    parser.add_argument("--zmq_target", type=str, default="127.0.0.1", help="部署端PC的IP")
+    parser.add_argument("--zmq_target", type=str, default="127.0.0.1", help="接收解算结果控制端PC的IP (默认 127.0.0.1)")
+    parser.add_argument("--cam_ip", type=str, default="192.168.123.164", help="网络推流端机器人的IP地址 (默认 192.168.123.164)")
     parser.add_argument("--box_dims", type=float, nargs=3, default=list(_CFG_DIMS), help="箱子半尺寸 hx hy hz")
     parser.add_argument("--tag_size", type=float, default=_CFG_TAG, help="AprilTag 有效检测边界尺寸(米)")
     parser.add_argument("--fovy", type=float, default=58.76, help="MuJoCo 相机垂直视场角 fovy (度)")
@@ -376,6 +399,6 @@ if __name__ == "__main__":
     parser.add_argument("--no_show", action="store_true", help="无头模式（关闭预览画面）")
     args = parser.parse_args()
 
-    mode = "sim" if args.sim else ("realsense" if args.realsense else "usb")
-    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, show_img=not args.no_show, box_dims=args.box_dims, tag_size=args.tag_size, fovy=args.fovy, tag_layout=args.tag_layout)
+    mode = "sim" if args.sim else ("stream" if args.stream else ("realsense" if args.realsense else "usb"))
+    node = MultiSourceVisionNode(mode=mode, cam_id=args.cam_id, zmq_target=args.zmq_target, cam_ip=args.cam_ip, show_img=not args.no_show, box_dims=args.box_dims, tag_size=args.tag_size, fovy=args.fovy, tag_layout=args.tag_layout)
     node.run()
