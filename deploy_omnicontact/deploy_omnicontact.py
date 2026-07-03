@@ -14,7 +14,7 @@ import yaml
 import os
 from common.ctrlcomp import PolicyOutput, StateAndCmd
 from FSM.FSM import FSM
-from common.utils import FSMCommand, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat
+from common.utils import FSMCommand, FSMStateName, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat
 from common.joystick import JoyStick, JoystickButton
 from omnicontact_vision import VisionReceiver
 
@@ -422,6 +422,9 @@ if __name__ == "__main__":
     if getattr(args, "real", False):
         from real_robot_interface import RealRobotInterface
         real_robot = RealRobotInterface(net_interface=getattr(args, "net_if", "enx6c1ff724495a"), num_joints=num_joints)
+        if not real_robot.wait_for_connection(timeout=10.0):
+            print("[deploy] 错误: 未能连接到真实机器人底层 DDS 数据包，程序退出以确保安全。")
+            sys.exit(1)
 
     state_cmd = StateAndCmd(num_joints)
     policy_output = PolicyOutput(num_joints)
@@ -724,6 +727,25 @@ if __name__ == "__main__":
                 FSMCommand.SKILL_OmniContact,
                 reset_fn_by_source.get(contactflow_policy.reference_source),
             )
+
+        if FSM_controller.cur_policy.name == FSMStateName.LOCOMODE or state_cmd.skill_cmd == FSMCommand.LOCO:
+            max_lin_vel = 0.5
+            max_ang_vel = 1.0
+            deadzone = 0.05
+            ax_x = -joystick.get_axis_value(1)
+            ax_y = -joystick.get_axis_value(0)
+            ax_z = -joystick.get_axis_value(3)
+            ax_x = ax_x if abs(ax_x) > deadzone else 0.0
+            ax_y = ax_y if abs(ax_y) > deadzone else 0.0
+            ax_z = ax_z if abs(ax_z) > deadzone else 0.0
+
+            target_vx = float(np.clip(ax_x * max_lin_vel, -0.4, max_lin_vel))
+            target_vy = float(np.clip(ax_y * max_lin_vel, -0.4, 0.4))
+            target_wz = float(np.clip(ax_z * max_ang_vel, -1.57, 1.57))
+
+            state_cmd.vel_cmd[0] = 2.0 * (target_vx - (-0.4)) / (0.7 - (-0.4)) - 1.0
+            state_cmd.vel_cmd[1] = 2.0 * (target_vy - (-0.4)) / (0.4 - (-0.4)) - 1.0
+            state_cmd.vel_cmd[2] = 2.0 * (target_wz - (-1.57)) / (1.57 - (-1.57)) - 1.0
 
         return True, reset_counter
 

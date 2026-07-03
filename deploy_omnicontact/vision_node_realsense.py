@@ -61,8 +61,8 @@ class MultiSourceVisionNode:
                 self.dist_coeffs = np.zeros((4, 1), dtype=np.float32)
             else: # stream 模式下填入实机实测 RealSense (1280x720) 内参
                 self.camera_matrix = np.array([
-                    [911.4385, 0.0, 646.4236],
-                    [0.0, 912.9034, 382.7312],
+                    [913.58, 0.0, 646.4236],
+                    [0.0, 914.01, 382.7312],
                     [0.0, 0.0, 1.0]
                 ], dtype=np.float32)
                 self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)

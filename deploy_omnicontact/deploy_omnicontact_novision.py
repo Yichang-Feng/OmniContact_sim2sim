@@ -14,7 +14,7 @@ import yaml
 import os
 from common.ctrlcomp import PolicyOutput, StateAndCmd
 from FSM.FSM import FSM
-from common.utils import FSMCommand, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat
+from common.utils import FSMCommand, FSMStateName, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat
 from common.joystick import JoyStick, JoystickButton
 from omnicontact_vision import VisionReceiver
 
@@ -315,6 +315,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Publish rendered sim camera images over ZMQ port 5555 for simulation vision testing.",
     )
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="Deploy to physical Unitree G1 robot over Ethernet DDS instead of simulation.",
+    )
+    parser.add_argument(
+        "--net-if",
+        type=str,
+        default="enx6c1ff724495a",
+        help="Network interface name connected to the robot (e.g., eth0, enp3s0).",
+    )
     args = parser.parse_args()
     args.task = TASK_ALIASES.get(args.task, args.task)
     xml_path = resolve_xml_path(args.task, args.xml_path, config)
@@ -406,7 +417,15 @@ if __name__ == "__main__":
     l_ankle_goal = np.zeros(7, dtype=np.float32)
     r_ankle_goal = np.zeros(7, dtype=np.float32)
     sim_counter = 0
-    
+
+    real_robot = None
+    if getattr(args, "real", False):
+        from real_robot_interface import RealRobotInterface
+        real_robot = RealRobotInterface(net_interface=getattr(args, "net_if", "enx6c1ff724495a"), num_joints=num_joints)
+        if not real_robot.wait_for_connection(timeout=10.0):
+            print("[deploy] 错误: 未能连接到真实机器人底层 DDS 数据包，程序退出以确保安全。")
+            sys.exit(1)
+
     state_cmd = StateAndCmd(num_joints)
     policy_output = PolicyOutput(num_joints)
     FSM_controller = FSM(state_cmd, policy_output)
@@ -691,9 +710,50 @@ if __name__ == "__main__":
                 reset_fn_by_source.get(contactflow_policy.reference_source),
             )
 
+        if FSM_controller.cur_policy.name == FSMStateName.LOCOMODE or state_cmd.skill_cmd == FSMCommand.LOCO:
+            max_lin_vel = 0.5
+            max_ang_vel = 1.0
+            deadzone = 0.05
+            ax_x = -joystick.get_axis_value(1)
+            ax_y = -joystick.get_axis_value(0)
+            ax_z = -joystick.get_axis_value(3)
+            ax_x = ax_x if abs(ax_x) > deadzone else 0.0
+            ax_y = ax_y if abs(ax_y) > deadzone else 0.0
+            ax_z = ax_z if abs(ax_z) > deadzone else 0.0
+
+            target_vx = float(np.clip(ax_x * max_lin_vel, -0.4, max_lin_vel))
+            target_vy = float(np.clip(ax_y * max_lin_vel, -0.4, 0.4))
+            target_wz = float(np.clip(ax_z * max_ang_vel, -1.57, 1.57))
+
+            state_cmd.vel_cmd[0] = 2.0 * (target_vx - (-0.4)) / (0.7 - (-0.4)) - 1.0
+            state_cmd.vel_cmd[1] = 2.0 * (target_vy - (-0.4)) / (0.4 - (-0.4)) - 1.0
+            state_cmd.vel_cmd[2] = 2.0 * (target_wz - (-1.57)) / (1.57 - (-1.57)) - 1.0
+
         return True, reset_counter
 
     def sync_robot_state():
+        if real_robot is not None:
+            res = real_robot.get_robot_state()
+            if res is not None:
+                q, dq, quat, gyro, base_pos, lin_vel = res
+                state_cmd.q = q.copy()
+                state_cmd.dq = dq.copy()
+                state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
+                state_cmd.base_pos = base_pos.copy()
+                state_cmd.base_quat = quat.copy()
+                state_cmd.ang_vel = gyro.copy()
+                state_cmd.lin_vel = lin_vel.copy()
+
+                d.qpos[:3] = base_pos
+                d.qpos[3:7] = quat
+                d.qpos[7 : 7 + num_joints] = q
+                d.qvel[:3] = lin_vel
+                d.qvel[3:6] = gyro
+                d.qvel[6 : 6 + num_joints] = dq
+                mujoco.mj_forward(m, d)
+            sync_object_state()
+            return
+
         quat = d.qpos[3:7]
         state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
         state_cmd.dq = d.qvel[6 : 6 + num_joints].copy()
@@ -787,19 +847,31 @@ if __name__ == "__main__":
                     l_ankle_goal = policy_output.l_ankle_goal.copy()
                     r_ankle_goal = policy_output.r_ankle_goal.copy()
                     
-                robot_qpos = d.qpos[7 : 7 + num_joints]
-                robot_qvel = d.qvel[6 : 6 + num_joints]
-                tau = pd_control(
-                    policy_output_action,
-                    robot_qpos,
-                    kps,
-                    np.zeros_like(kps),
-                    robot_qvel,
-                    kds,
-                    torque_limit_mj=torque_limit_mj,
-                )
-                d.ctrl[:] = tau
-                mujoco.mj_step(m, d)
+                if real_robot is not None:
+                    real_robot.send_joint_commands(
+                        policy_output_action,
+                        kps,
+                        kds,
+                    )
+                    robot_qpos = state_cmd.q
+                    robot_qvel = state_cmd.dq
+                    tau = pd_control(policy_output_action, robot_qpos, kps, np.zeros_like(kps), robot_qvel, kds, torque_limit_mj=torque_limit_mj)
+                    d.ctrl[:] = tau
+                    mujoco.mj_forward(m, d)
+                else:
+                    robot_qpos = d.qpos[7 : 7 + num_joints]
+                    robot_qvel = d.qvel[6 : 6 + num_joints]
+                    tau = pd_control(
+                        policy_output_action,
+                        robot_qpos,
+                        kps,
+                        np.zeros_like(kps),
+                        robot_qvel,
+                        kds,
+                        torque_limit_mj=torque_limit_mj,
+                    )
+                    d.ctrl[:] = tau
+                    mujoco.mj_step(m, d)
                 if sim_renderer is not None and vision_receiver is not None:
                     sim_renderer.update_scene(d, camera="depth_camera")
                     rgb_img = sim_renderer.render()

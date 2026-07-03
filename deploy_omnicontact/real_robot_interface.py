@@ -27,7 +27,20 @@ class RealRobotInterface:
 
         print(f"[RealRobotInterface] 初始化以太网通道网卡: {net_interface} ...")
         ChannelFactoryInitialize(0, net_interface)
-        
+
+        try:
+            from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
+            print("[RealRobotInterface] 正在检查并释放高层运控模式 (MotionSwitcher ReleaseMode)...")
+            msc = MotionSwitcherClient()
+            msc.SetTimeout(3.0)
+            msc.Init()
+            status, result = msc.CheckMode()
+            if result and result.get('name'):
+                print(f"[RealRobotInterface] 检测到当前运行模式: {result['name']}，正在释放以允许底层控制...")
+                msc.ReleaseMode()
+        except Exception as e:
+            pass
+
         self.sub = ChannelSubscriber("rt/lowstate", LowState_)
         self.sub.Init(self._state_handler, 10)
 
@@ -44,9 +57,8 @@ class RealRobotInterface:
         except Exception:
             pass
 
-        self.pub = ChannelPublisher("rt/lowcmd", LowCmd_)
-        self.pub.Init()
-        print("[RealRobotInterface] DDS订阅与发布通道初始化完成！等待底层反馈包...")
+        self.pub = None
+        print("[RealRobotInterface] DDS订阅监听初始化完成！正在被动监听底层反馈包...")
 
     def _state_handler(self, msg: LowState_):
         self.low_state = msg
@@ -62,10 +74,14 @@ class RealRobotInterface:
         start = time.time()
         while time.time() - start < timeout:
             if self.low_state is not None:
-                print("[RealRobotInterface] ✅ 成功接收到机器人底层数据帧！")
+                print("[RealRobotInterface] ✅ 成功接收到机器人底层数据帧！正在初始化下行指令发布通道...")
+                if self.pub is None:
+                    self.pub = ChannelPublisher("rt/lowcmd", LowCmd_)
+                    self.pub.Init()
+                print("[RealRobotInterface] ✅ 下行控制通道初始化完成！")
                 return True
             time.sleep(0.05)
-        print("[RealRobotInterface] ⚠️ 等待超时，尚未收到底包，请检查物理连线或网卡IP段配置。")
+        print("[RealRobotInterface] ⚠️ 等待超时，尚未收到底包。")
         return False
 
     def get_robot_state(self):
@@ -132,4 +148,5 @@ class RealRobotInterface:
             crc=0
         )
         cmd.crc = self.crc_calculator.Crc(cmd)
-        self.pub.Write(cmd)
+        if self.pub is not None:
+            self.pub.Write(cmd)
