@@ -191,6 +191,7 @@ python deploy_omnicontact/run_skill_omnicontact.py \
 | `--start-frame N` | Inclusive start frame for NPZ motion tracking. |
 | `--end-frame N` | Exclusive end frame for NPZ motion tracking. `-1` uses all remaining frames. |
 | `--no-reset-env` | Disable startup environment reset. |
+| `--replan` | Enable CFgen replan support (disabled by default). |
 | `--disable-replan` | Disable CFgen replan support. |
 
 </details>

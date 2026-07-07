@@ -290,8 +290,8 @@ if __name__ == "__main__":
         "--replan",
         dest="replan",
         action="store_true",
-        default=not bool(config.get("disable_replan", False)),
-        help="Enable drop-triggered closed-loop replan for WTAC carrybox CFgen. Enabled by default.",
+        default=not bool(config.get("disable_replan", True)),
+        help="Enable drop-triggered closed-loop replan for WTAC carrybox CFgen. Disabled by default.",
     )
     parser.add_argument(
         "--disable-replan",
@@ -422,7 +422,7 @@ if __name__ == "__main__":
     if getattr(args, "real", False):
         from real_robot_interface import RealRobotInterface
         real_robot = RealRobotInterface(net_interface=getattr(args, "net_if", "enx6c1ff724495a"), num_joints=num_joints)
-        if not real_robot.wait_for_connection(timeout=10.0):
+        if not real_robot.wait_for_connection(timeout=60.0):
             print("[deploy] 错误: 未能连接到真实机器人底层 DDS 数据包，程序退出以确保安全。")
             sys.exit(1)
 
@@ -494,7 +494,8 @@ if __name__ == "__main__":
 
     def wtac_carrybox_replan_enabled() -> bool:
         return (
-            FSM_controller.cur_policy is contactflow_policy
+            bool(getattr(args, "replan", False))
+            and FSM_controller.cur_policy is contactflow_policy
             and contactflow_policy.reference_source == "CFgen"
             and contactflow_policy.task != "kickball"
         )
@@ -586,7 +587,10 @@ if __name__ == "__main__":
                 state_cmd.obj_quat = v_quat
                 err = float(np.linalg.norm(v_pos - gt_pos))
                 if sim_counter % 40 == 0:
-                    print(f"\r[Vision Compare] 实际GT: [{gt_pos[0]:.3f}, {gt_pos[1]:.3f}, {gt_pos[2]:.3f}] | 解算Est: [{v_pos[0]:.3f}, {v_pos[1]:.3f}, {v_pos[2]:.3f}] | 误差Error: {err*100:.2f} cm   ", end="", flush=True)
+                    v_yaw = float(np.degrees(np.arctan2(2*(v_quat[0]*v_quat[3] + v_quat[1]*v_quat[2]), 1 - 2*(v_quat[2]**2 + v_quat[3]**2))))
+                    gt_quat = d.xquat[box_body_id]
+                    gt_yaw = float(np.degrees(np.arctan2(2*(gt_quat[0]*gt_quat[3] + gt_quat[1]*gt_quat[2]), 1 - 2*(gt_quat[2]**2 + gt_quat[3]**2))))
+                    print(f"\r[Vision Compare] GT: [{gt_pos[0]:.2f}, {gt_pos[1]:.2f}, {gt_pos[2]:.2f}] | Est: [{v_pos[0]:.2f}, {v_pos[1]:.2f}, {v_pos[2]:.2f}] | EstYaw: {v_yaw:.1f}° (GT: {gt_yaw:.1f}°) | 误差: {err*100:.1f} cm   ", end="", flush=True)
             else:
                 state_cmd.obj_pos = gt_pos
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
@@ -754,16 +758,27 @@ if __name__ == "__main__":
             res = real_robot.get_robot_state()
             if res is not None:
                 q, dq, quat, gyro, base_pos, lin_vel = res
+
+                # 修复真机无SLAM时的坐标漂移与沉地问题：
+                # 1. 若底层未给出物理绝对位姿(全0)，默认采用物理站立高度(m.qpos0[:3])，防止机身沉入地下导致Z轴解算为负。
+                if np.allclose(base_pos, 0.0):
+                    base_pos = m.qpos0[:3].copy()
+
+                # 2. 移除 IMU 四元数中随开机朝向随机变动的全局偏航角(Yaw)，仅保留俯仰角(Pitch)与横滚角(Roll)。
+                # 这样能在真机部署时，将相机与机身朝向完美对齐到 MuJoCo 物理工作空间的 +X 轴，消除视觉解算的巨大 XY 偏差！
+                quat_aligned = quat_mul(quat_conjugate(yaw_quat(quat)), quat).astype(np.float32)
+                quat_aligned /= max(float(np.linalg.norm(quat_aligned)), 1e-8)
+
                 state_cmd.q = q.copy()
                 state_cmd.dq = dq.copy()
                 state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
                 state_cmd.base_pos = base_pos.copy()
-                state_cmd.base_quat = quat.copy()
+                state_cmd.base_quat = quat_aligned.copy()
                 state_cmd.ang_vel = gyro.copy()
                 state_cmd.lin_vel = lin_vel.copy()
 
                 d.qpos[:3] = base_pos
-                d.qpos[3:7] = quat
+                d.qpos[3:7] = quat_aligned
                 d.qpos[7 : 7 + num_joints] = q
                 d.qvel[:3] = lin_vel
                 d.qvel[3:6] = gyro
@@ -841,68 +856,73 @@ if __name__ == "__main__":
             m.geom_rgba[geom] = reference_red if contact >= 0.5 else reference_yellow
         
 
-    with mujoco.viewer.launch_passive(m, d) as viewer:
-        while viewer.is_running() and Running:
-            try:
-                Running, should_reset_counter = handle_joystick()
-                if should_reset_counter:
-                    sim_counter = 0
+    try:
+        with mujoco.viewer.launch_passive(m, d) as viewer:
+            while viewer.is_running() and Running:
+                try:
+                    Running, should_reset_counter = handle_joystick()
+                    if should_reset_counter:
+                        sim_counter = 0
 
-                step_start = time.time()
-                if sim_counter % control_decimation == 0:
-                    sync_robot_state()
-                    FSM_controller.run()
-                    maybe_closed_loop_replan()
+                    step_start = time.time()
+                    if sim_counter % control_decimation == 0:
+                        sync_robot_state()
+                        FSM_controller.run()
+                        maybe_closed_loop_replan()
 
-                    policy_output_action = policy_output.actions.copy()
-                    kps = policy_output.kps.copy()
-                    kds = policy_output.kds.copy()
-                    wrist_state = policy_output.wrist_goal.copy()
-                    contact_state = policy_output.contact.copy()
-                    torso_goal = policy_output.torso_goal.copy()
-                    l_ankle_goal = policy_output.l_ankle_goal.copy()
-                    r_ankle_goal = policy_output.r_ankle_goal.copy()
+                        policy_output_action = policy_output.actions.copy()
+                        kps = policy_output.kps.copy()
+                        kds = policy_output.kds.copy()
+                        wrist_state = policy_output.wrist_goal.copy()
+                        contact_state = policy_output.contact.copy()
+                        torso_goal = policy_output.torso_goal.copy()
+                        l_ankle_goal = policy_output.l_ankle_goal.copy()
+                        r_ankle_goal = policy_output.r_ankle_goal.copy()
+                        
+                    if real_robot is not None:
+                        real_robot.send_joint_commands(
+                            policy_output_action,
+                            kps,
+                            kds,
+                        )
+                        robot_qpos = state_cmd.q
+                        robot_qvel = state_cmd.dq
+                        tau = pd_control(policy_output_action, robot_qpos, kps, np.zeros_like(kps), robot_qvel, kds, torque_limit_mj=torque_limit_mj)
+                        d.ctrl[:] = tau
+                        mujoco.mj_forward(m, d)
+                    else:
+                        robot_qpos = d.qpos[7 : 7 + num_joints]
+                        robot_qvel = d.qvel[6 : 6 + num_joints]
+                        tau = pd_control(
+                            policy_output_action,
+                            robot_qpos,
+                            kps,
+                            np.zeros_like(kps),
+                            robot_qvel,
+                            kds,
+                            torque_limit_mj=torque_limit_mj,
+                        )
+                        d.ctrl[:] = tau
+                        mujoco.mj_step(m, d)
+                    if sim_renderer is not None and vision_receiver is not None:
+                        sim_renderer.update_scene(d, camera="depth_camera")
+                        rgb_img = sim_renderer.render()
+                        vision_receiver.publish_image(rgb_img)
                     
-                if real_robot is not None:
-                    real_robot.send_joint_commands(
-                        policy_output_action,
-                        kps,
-                        kds,
-                    )
-                    robot_qpos = state_cmd.q
-                    robot_qvel = state_cmd.dq
-                    tau = pd_control(policy_output_action, robot_qpos, kps, np.zeros_like(kps), robot_qvel, kds, torque_limit_mj=torque_limit_mj)
-                    d.ctrl[:] = tau
-                    mujoco.mj_forward(m, d)
-                else:
-                    robot_qpos = d.qpos[7 : 7 + num_joints]
-                    robot_qvel = d.qvel[6 : 6 + num_joints]
-                    tau = pd_control(
-                        policy_output_action,
-                        robot_qpos,
-                        kps,
-                        np.zeros_like(kps),
-                        robot_qvel,
-                        kds,
-                        torque_limit_mj=torque_limit_mj,
-                    )
-                    d.ctrl[:] = tau
-                    mujoco.mj_step(m, d)
-                if sim_renderer is not None and vision_receiver is not None:
-                    sim_renderer.update_scene(d, camera="depth_camera")
-                    rgb_img = sim_renderer.render()
-                    vision_receiver.publish_image(rgb_img)
-                
-                update_reference_visualization()
+                    update_reference_visualization()
 
-                sim_counter += 1
-            except ValueError as e:
-                print(f"ValueError detected: {str(e)}")
-                print(f"Debug Info: num_joints={num_joints}, qpos.shape={d.qpos.shape}, qvel.shape={d.qvel.shape}")
-                break
-            
-            viewer.sync()
-            time_until_next_step = m.opt.timestep - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+                    sim_counter += 1
+                except ValueError as e:
+                    print(f"ValueError detected: {str(e)}")
+                    print(f"Debug Info: num_joints={num_joints}, qpos.shape={d.qpos.shape}, qvel.shape={d.qvel.shape}")
+                    break
+                
+                viewer.sync()
+                time_until_next_step = m.opt.timestep - (time.time() - step_start)
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)
+    finally:
+        if real_robot is not None:
+            print("[deploy] 正在退出程序，启动安全阻尼保护 (参考 Sonic CreateDampingCommand, kp=0, kd=8.0)...")
+            real_robot.stop()
         

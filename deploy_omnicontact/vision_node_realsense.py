@@ -25,7 +25,7 @@ except ImportError:
     try:
         from box_tag_config import BOX_HALF_DIMS as _CFG_DIMS, TAG_SIZE as _CFG_TAG, TAG_LAYOUT as _CFG_LAYOUT
     except ImportError:
-        _CFG_DIMS, _CFG_TAG, _CFG_LAYOUT = (0.215, 0.185, 0.125), 0.1, "1tag"
+        _CFG_DIMS, _CFG_TAG, _CFG_LAYOUT = (0.125, 0.215, 0.185), 0.1, "1tag"
 
 class MultiSourceVisionNode:
     def __init__(self, mode="usb", cam_id=0, zmq_target="127.0.0.1", cam_ip="192.168.123.164", show_img=True, box_dims=_CFG_DIMS, tag_size=_CFG_TAG, fovy=58.76, tag_layout=_CFG_LAYOUT):

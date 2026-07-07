@@ -7,7 +7,7 @@ task_choices: ["carrybox", "pushbox-two", "pushbox-in", "slidebox", "slidebox-le
 init_pos: [1.0, 0.0, 0.55]
 box_half_dims: [0.125, 0.215, 0.185]
 goal_pos: [3.0, 0.0, 0.26]
-disable_replan: false
+disable_replan: true
 
 lab2mj: [0, 3, 6, 9, 13, 17, 1, 4, 7, 10, 14, 18, 2, 5, 8, 11, 15, 19, 21, 23, 25, 27, 12, 16, 20, 22, 24, 26, 28]
 torque_limit_lab: [

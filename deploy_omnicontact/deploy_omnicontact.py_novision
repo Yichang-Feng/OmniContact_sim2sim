@@ -290,8 +290,8 @@ if __name__ == "__main__":
         "--replan",
         dest="replan",
         action="store_true",
-        default=not bool(config.get("disable_replan", False)),
-        help="Enable drop-triggered closed-loop replan for WTAC carrybox CFgen. Enabled by default.",
+        default=not bool(config.get("disable_replan", True)),
+        help="Enable drop-triggered closed-loop replan for WTAC carrybox CFgen. Disabled by default.",
     )
     parser.add_argument(
         "--disable-replan",
@@ -422,7 +422,7 @@ if __name__ == "__main__":
     if getattr(args, "real", False):
         from real_robot_interface import RealRobotInterface
         real_robot = RealRobotInterface(net_interface=getattr(args, "net_if", "enx6c1ff724495a"), num_joints=num_joints)
-        if not real_robot.wait_for_connection(timeout=10.0):
+        if not real_robot.wait_for_connection(timeout=60.0):
             print("[deploy] 错误: 未能连接到真实机器人底层 DDS 数据包，程序退出以确保安全。")
             sys.exit(1)
 
@@ -494,7 +494,8 @@ if __name__ == "__main__":
 
     def wtac_carrybox_replan_enabled() -> bool:
         return (
-            FSM_controller.cur_policy is contactflow_policy
+            bool(getattr(args, "replan", False))
+            and FSM_controller.cur_policy is contactflow_policy
             and contactflow_policy.reference_source == "CFgen"
             and contactflow_policy.task != "kickball"
         )

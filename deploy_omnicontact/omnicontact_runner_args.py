@@ -118,6 +118,13 @@ def parse_args() -> argparse.Namespace:
         help="Stop when OmniContact CFgen reaches the end and sets switch_to_loco.",
     )
     parser.add_argument(
+        "--replan",
+        dest="replan",
+        action="store_true",
+        default=False,
+        help="Enable replan support for CFgen runs. Disabled by default.",
+    )
+    parser.add_argument(
         "--disable-replan",
         dest="replan",
         action="store_false",
