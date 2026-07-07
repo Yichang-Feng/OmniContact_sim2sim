@@ -14,7 +14,7 @@ import yaml
 import os
 from common.ctrlcomp import PolicyOutput, StateAndCmd
 from FSM.FSM import FSM
-from common.utils import FSMCommand, FSMStateName, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat
+from common.utils import FSMCommand, FSMStateName, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat, quat_apply, subtract_frame_transforms
 from common.joystick import JoyStick, JoystickButton
 from omnicontact_vision import VisionReceiver
 
@@ -583,6 +583,8 @@ if __name__ == "__main__":
 
             gt_pos = d.xpos[box_body_id].copy()
             if valid and v_pos is not None:
+                vision_cache["last_pos"] = v_pos.copy()
+                vision_cache["last_quat"] = v_quat.copy()
                 state_cmd.obj_pos = v_pos
                 state_cmd.obj_quat = v_quat
                 err = float(np.linalg.norm(v_pos - gt_pos))
@@ -592,13 +594,23 @@ if __name__ == "__main__":
                     gt_yaw = float(np.degrees(np.arctan2(2*(gt_quat[0]*gt_quat[3] + gt_quat[1]*gt_quat[2]), 1 - 2*(gt_quat[2]**2 + gt_quat[3]**2))))
                     print(f"\r[Vision Compare] GT: [{gt_pos[0]:.2f}, {gt_pos[1]:.2f}, {gt_pos[2]:.2f}] | Est: [{v_pos[0]:.2f}, {v_pos[1]:.2f}, {v_pos[2]:.2f}] | EstYaw: {v_yaw:.1f}° (GT: {gt_yaw:.1f}°) | 误差: {err*100:.1f} cm   ", end="", flush=True)
             else:
-                state_cmd.obj_pos = gt_pos
-                state_cmd.obj_quat = d.xquat[box_body_id].copy()
-                if sim_counter % 40 == 0:
-                    print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
+                if real_robot is not None and vision_cache["last_pos"] is not None:
+                    state_cmd.obj_pos = vision_cache["last_pos"].copy()
+                    state_cmd.obj_quat = vision_cache["last_quat"].copy()
+                    if sim_counter % 40 == 0:
+                        print(f"\r[Vision Compare] ⚠️ 视觉丢帧/遮挡！真机已自动保持上次有效位姿 (防止瞬移回起点)   ", end="", flush=True)
+                else:
+                    state_cmd.obj_pos = gt_pos
+                    state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                    if sim_counter % 40 == 0:
+                        print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
         else:
-            state_cmd.obj_pos = d.xpos[box_body_id].copy()
-            state_cmd.obj_quat = d.xquat[box_body_id].copy()
+            if real_robot is not None and vision_cache["last_pos"] is not None:
+                state_cmd.obj_pos = vision_cache["last_pos"].copy()
+                state_cmd.obj_quat = vision_cache["last_quat"].copy()
+            else:
+                state_cmd.obj_pos = d.xpos[box_body_id].copy()
+                state_cmd.obj_quat = d.xquat[box_body_id].copy()
         if should_apply_replan_object_quat_offset():
             # Re-anchor a dropped box to a yaw-only baseline while keeping later relative in-hand tilt cues.
             state_cmd.obj_quat = quat_mul(
@@ -753,6 +765,9 @@ if __name__ == "__main__":
 
         return True, reset_counter
 
+    odom_calibration = {"initial_pos_xy": None, "initial_yaw_quat": None}
+    vision_cache = {"last_pos": None, "last_quat": None}
+
     def sync_robot_state():
         if real_robot is not None:
             res = real_robot.get_robot_state()
@@ -760,13 +775,23 @@ if __name__ == "__main__":
                 q, dq, quat, gyro, base_pos, lin_vel = res
 
                 # 修复真机无SLAM时的坐标漂移与沉地问题：
-                # 1. 若底层未给出物理绝对位姿(全0)，默认采用物理站立高度(m.qpos0[:3])，防止机身沉入地下导致Z轴解算为负。
+                # 1. 若底层未给出物理绝对位姿(全0)，默认采用物理站立高度(m.qpos0[:3])；
+                # 若接收到了实时里程计，则锁定开机第一帧的XY作为坐标原点，保留后续位移。
                 if np.allclose(base_pos, 0.0):
                     base_pos = m.qpos0[:3].copy()
+                else:
+                    if odom_calibration["initial_pos_xy"] is None:
+                        odom_calibration["initial_pos_xy"] = base_pos[:2].copy()
+                        print(f"\n[Odom Calibration] 🛰️ 锁定初始XY位移锚点: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}]")
+                    base_pos[0] -= odom_calibration["initial_pos_xy"][0]
+                    base_pos[1] -= odom_calibration["initial_pos_xy"][1]
 
-                # 2. 移除 IMU 四元数中随开机朝向随机变动的全局偏航角(Yaw)，仅保留俯仰角(Pitch)与横滚角(Roll)。
-                # 这样能在真机部署时，将相机与机身朝向完美对齐到 MuJoCo 物理工作空间的 +X 轴，消除视觉解算的巨大 XY 偏差！
-                quat_aligned = quat_mul(quat_conjugate(yaw_quat(quat)), quat).astype(np.float32)
+                # 2. 仅在首次开机时锁定并移除初始全局偏航角(Yaw Offset)，但在后续运动过程中保留真实的转弯角！
+                # 这样既能对齐物理工作空间，又能确保当机器人在行进中发生转向或受扰动时，RL 策略能实时感知自身朝向变化，解决向右跑偏且不回正的问题！
+                if odom_calibration["initial_yaw_quat"] is None:
+                    odom_calibration["initial_yaw_quat"] = yaw_quat(quat).astype(np.float32)
+                    print(f"[Odom Calibration] 🧭 锁定开机第一帧朝向四元数: [{odom_calibration['initial_yaw_quat'][0]:.3f}, {odom_calibration['initial_yaw_quat'][1]:.3f}, {odom_calibration['initial_yaw_quat'][2]:.3f}, {odom_calibration['initial_yaw_quat'][3]:.3f}]")
+                quat_aligned = quat_mul(quat_conjugate(odom_calibration["initial_yaw_quat"]), quat).astype(np.float32)
                 quat_aligned /= max(float(np.linalg.norm(quat_aligned)), 1e-8)
 
                 state_cmd.q = q.copy()
@@ -854,7 +879,17 @@ if __name__ == "__main__":
 
         for geom, contact in zip(ref_contact_geom_ids, contact_state):
             m.geom_rgba[geom] = reference_red if contact >= 0.5 else reference_yellow
-        
+
+    log_file_path = os.path.join(PROJECT_ROOT, "object_pose_logging.txt")
+    log_step_counter = 0
+    with open(log_file_path, "w", encoding="utf-8") as f:
+        f.write("# OmniContact 物体位姿追踪日志 (每20帧记录一次)\n")
+        f.write("# ------------------------------------------------------------------\n")
+        f.write("# 核查说明与对应连杆关系：\n")
+        f.write("# 1. [视觉原始接收] 相对连杆/坐标系：【d435_camera_frame】(头部相机光学中心)\n")
+        f.write("# 2. [上层 CFgen 输入] 相对连杆/坐标系：【pelvis】(Unitree G1 根连杆/骨盆浮动基座)\n")
+        f.write("# 3. [底层 RL 策略输入] 相对连杆/坐标系：【torso_link】(胸口连杆，已剔除俯仰与翻滚保留水平yaw朝向)\n")
+        f.write("# ------------------------------------------------------------------\n\n")
 
     try:
         with mujoco.viewer.launch_passive(m, d) as viewer:
@@ -867,7 +902,15 @@ if __name__ == "__main__":
                     step_start = time.time()
                     if sim_counter % control_decimation == 0:
                         sync_robot_state()
+                        prev_policy = FSM_controller.cur_policy
                         FSM_controller.run()
+                        if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy:
+                            print("\n[Odom Calibration] Switched to omnicontact, resetting odometry calibration and vision cache.")
+                            odom_calibration["initial_pos_xy"] = None
+                            odom_calibration["initial_yaw_quat"] = None
+                            vision_cache["last_pos"] = None
+                            vision_cache["last_quat"] = None
+                            sync_robot_state()
                         maybe_closed_loop_replan()
 
                         policy_output_action = policy_output.actions.copy()
@@ -878,7 +921,51 @@ if __name__ == "__main__":
                         torso_goal = policy_output.torso_goal.copy()
                         l_ankle_goal = policy_output.l_ankle_goal.copy()
                         r_ankle_goal = policy_output.r_ankle_goal.copy()
-                        
+
+                        log_step_counter += 1
+                        if log_step_counter % 20 == 0:
+                            cam_pos_str, cam_quat_str = "None", "None"
+                            if vision_receiver is not None and getattr(vision_receiver, "obj_pose_cv", None) is not None:
+                                c_pos = vision_receiver.obj_pose_cv.get("pos", None)
+                                c_quat = vision_receiver.obj_pose_cv.get("quat", None)
+                                if c_pos is not None:
+                                    cam_pos_str = f"[{c_pos[0]:.4f}, {c_pos[1]:.4f}, {c_pos[2]:.4f}]"
+                                if c_quat is not None:
+                                    cam_quat_str = f"[{c_quat[0]:.4f}, {c_quat[1]:.4f}, {c_quat[2]:.4f}, {c_quat[3]:.4f}]"
+
+                            inv_base = quat_conjugate(state_cmd.base_quat)
+                            upper_pos_rel = quat_apply(inv_base, state_cmd.obj_pos - state_cmd.base_pos)
+                            upper_quat_rel = quat_mul(inv_base, state_cmd.obj_quat)
+
+                            if hasattr(contactflow_policy, "torso_pos") and hasattr(contactflow_policy, "torso_quat"):
+                                torso_heading = yaw_quat(contactflow_policy.torso_quat)
+                                lower_pos_rel, lower_quat_rel = subtract_frame_transforms(
+                                    contactflow_policy.torso_pos, torso_heading, state_cmd.obj_pos, state_cmd.obj_quat
+                                )
+                            else:
+                                torso_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
+                                t_pos = d.xpos[torso_id] if torso_id >= 0 else state_cmd.base_pos
+                                t_quat = d.xquat[torso_id] if torso_id >= 0 else state_cmd.base_quat
+                                lower_pos_rel, lower_quat_rel = subtract_frame_transforms(
+                                    t_pos, yaw_quat(t_quat), state_cmd.obj_pos, state_cmd.obj_quat
+                                )
+
+                            log_msg = (
+                                f"=== Step: {log_step_counter} (Sim Counter: {sim_counter}, Time: {time.time()-step_start:.3f}s) ===\n"
+                                f"[1. 视觉原始接收] 相对连杆：【d435_camera_frame】(头部相机光学系)\n"
+                                f"   - Pos: {cam_pos_str}\n"
+                                f"   - Quat: {cam_quat_str}\n"
+                                f"[2. 上层 CFgen 输入] 相对连杆：【pelvis】(G1骨盆浮动基座，第0号连杆)\n"
+                                f"   - Pos: [{upper_pos_rel[0]:.4f}, {upper_pos_rel[1]:.4f}, {upper_pos_rel[2]:.4f}] (m)\n"
+                                f"   - Quat: [{upper_quat_rel[0]:.4f}, {upper_quat_rel[1]:.4f}, {upper_quat_rel[2]:.4f}, {upper_quat_rel[3]:.4f}]\n"
+                                f"[3. 底层 RL 策略输入] 相对连杆：【torso_link】(胸口连杆，剔除俯仰与翻滚后的水平Yaw朝向系)\n"
+                                f"   - Pos: [{lower_pos_rel[0]:.4f}, {lower_pos_rel[1]:.4f}, {lower_pos_rel[2]:.4f}] (m)\n"
+                                f"   - Quat: [{lower_quat_rel[0]:.4f}, {lower_quat_rel[1]:.4f}, {lower_quat_rel[2]:.4f}, {lower_quat_rel[3]:.4f}]\n"
+                                f"------------------------------------------------------------------\n"
+                            )
+                            with open(log_file_path, "a", encoding="utf-8") as f:
+                                f.write(log_msg)
+
                     if real_robot is not None:
                         real_robot.send_joint_commands(
                             policy_output_action,

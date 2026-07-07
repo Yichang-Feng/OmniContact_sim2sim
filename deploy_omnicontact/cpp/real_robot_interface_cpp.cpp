@@ -17,13 +17,17 @@
 #include <unitree/robot/b2/motion_switcher/motion_switcher_client.hpp>
 #include <unitree/idl/hg/LowCmd_.hpp>
 #include <unitree/idl/hg/LowState_.hpp>
+#include <unitree/idl/go2/SportModeState_.hpp>
 
 using namespace unitree::common;
 using namespace unitree::robot;
 using namespace unitree_hg::msg::dds_;
+using namespace unitree_go::msg::dds_;
 
 static const std::string HG_STATE_TOPIC = "rt/lowstate";
 static const std::string HG_CMD_TOPIC = "rt/lowcmd";
+static const std::string ODOM_STATE_TOPIC = "rt/odommodestate";
+static const std::string ODOM_LF_STATE_TOPIC = "rt/lf/odommodestate";
 
 // CRC32 计算函数 (完全一致对照 Sonic C++ utils.hpp)
 inline uint32_t Crc32Core(uint32_t* ptr, uint32_t len) {
@@ -57,10 +61,16 @@ private:
     std::shared_ptr<LowState_> latest_state_ = nullptr;
     std::mutex state_mutex_;
 
+    std::shared_ptr<SportModeState_> latest_odom_ = nullptr;
+    std::mutex odom_mutex_;
+    bool odom_printed_ = false;
+
     LowCmd_ current_cmd_;
     std::mutex cmd_mutex_;
 
     ChannelSubscriberPtr<LowState_> sub_;
+    ChannelSubscriberPtr<SportModeState_> sub_odom_;
+    ChannelSubscriberPtr<SportModeState_> sub_odom_lf_;
     ChannelPublisherPtr<LowCmd_> pub_;
 
     std::atomic<bool> running_{false};
@@ -93,12 +103,18 @@ public:
             current_cmd_.crc() = Crc32Core((uint32_t*)&current_cmd_, (sizeof(LowCmd_) >> 2) - 1);
         }
 
-        std::cout << "[RealRobotInterfaceCpp] 正在初始化 C++ DDS 发布/订阅端点 (" << HG_STATE_TOPIC << " & " << HG_CMD_TOPIC << ")..." << std::endl;
+        std::cout << "[RealRobotInterfaceCpp] 正在初始化 C++ DDS 发布/订阅端点 (" << HG_STATE_TOPIC << ", " << ODOM_STATE_TOPIC << ")..." << std::endl;
         pub_.reset(new ChannelPublisher<LowCmd_>(HG_CMD_TOPIC));
         pub_->InitChannel();
 
         sub_.reset(new ChannelSubscriber<LowState_>(HG_STATE_TOPIC));
         sub_->InitChannel(std::bind(&RealRobotInterfaceCpp::LowStateHandler, this, std::placeholders::_1), 1);
+
+        sub_odom_.reset(new ChannelSubscriber<SportModeState_>(ODOM_STATE_TOPIC));
+        sub_odom_->InitChannel(std::bind(&RealRobotInterfaceCpp::OdomStateHandler, this, std::placeholders::_1), 1);
+
+        sub_odom_lf_.reset(new ChannelSubscriber<SportModeState_>(ODOM_LF_STATE_TOPIC));
+        sub_odom_lf_->InitChannel(std::bind(&RealRobotInterfaceCpp::OdomStateHandler, this, std::placeholders::_1), 1);
 
         // 启动 500Hz 实时心跳与发包线程
         running_ = true;
@@ -125,6 +141,21 @@ public:
                 std::cout << "[RealRobotInterfaceCpp] ✅ 首次锁定机器人机型识别码 (mode_machine): " << unsigned(ls->mode_machine()) << std::endl;
             }
             mode_machine_ = ls->mode_machine();
+        }
+    }
+
+    void OdomStateHandler(const void* message) {
+        const SportModeState_* odom = (const SportModeState_*)message;
+        std::lock_guard<std::mutex> lock(odom_mutex_);
+        if (!latest_odom_) {
+            latest_odom_ = std::make_shared<SportModeState_>(*odom);
+        } else {
+            *latest_odom_ = *odom;
+        }
+        if (!odom_printed_) {
+            odom_printed_ = true;
+            std::cout << "[RealRobotInterfaceCpp] 🛰️ 成功订阅并绑定宇树内置里程计话题 (" << ODOM_STATE_TOPIC << ")！初始位置: [" 
+                      << odom->position()[0] << ", " << odom->position()[1] << ", " << odom->position()[2] << "]" << std::endl;
         }
     }
 
@@ -194,10 +225,20 @@ public:
         auto gyro = ls_copy->imu_state().gyroscope(); // [x, y, z]
         for (int i = 0; i < 3; i++) gyro_out[i] = gyro[i];
 
-        // 底层模式下默认物理世界基座坐标与线速度置为 0
-        for (int i = 0; i < 3; i++) {
-            pos_out[i] = 0.0f;
-            vel_out[i] = 0.0f;
+        // 底层模式下：优先使用订阅到的实时里程计世界坐标与线速度；若无可用的里程计数据，才置0
+        {
+            std::lock_guard<std::mutex> lock(odom_mutex_);
+            if (latest_odom_) {
+                for (int i = 0; i < 3; i++) {
+                    pos_out[i] = latest_odom_->position()[i];
+                    vel_out[i] = latest_odom_->velocity()[i];
+                }
+            } else {
+                for (int i = 0; i < 3; i++) {
+                    pos_out[i] = 0.0f;
+                    vel_out[i] = 0.0f;
+                }
+            }
         }
 
         if (mode_machine_out) {

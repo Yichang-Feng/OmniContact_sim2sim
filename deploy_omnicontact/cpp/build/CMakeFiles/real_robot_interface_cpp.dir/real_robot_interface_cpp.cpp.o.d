@@ -786,4 +786,8 @@ CMakeFiles/real_robot_interface_cpp.dir/real_robot_interface_cpp.cpp.o: \
  /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/hg/MotorCmd_.hpp \
  /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/hg/LowState_.hpp \
  /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/hg/IMUState_.hpp \
- /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/hg/MotorState_.hpp
+ /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/hg/MotorState_.hpp \
+ /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/go2/SportModeState_.hpp \
+ /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/go2/IMUState_.hpp \
+ /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/go2/PathPoint_.hpp \
+ /home/feng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/unitree_sdk2/include/unitree/idl/go2/TimeSpec_.hpp

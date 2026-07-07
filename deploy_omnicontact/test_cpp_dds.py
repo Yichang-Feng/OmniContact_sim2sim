@@ -72,8 +72,11 @@ def test_cpp_dds():
             if success:
                 q_arr = np.ctypeslib.as_array(q_buf)
                 quat_arr = np.ctypeslib.as_array(quat_buf)
+                pos_arr = np.ctypeslib.as_array(pos_buf)
+                vel_arr = np.ctypeslib.as_array(vel_buf)
                 print(f"   ⏱️ [第 {i+1} 秒] 机型代码(mode_machine): {mode_machine_buf.value} | "
-                      f"关节0(左髋航向): {q_arr[0]:.4f} rad | "
+                      f"基座坐标OdomPos: [{pos_arr[0]:.3f}, {pos_arr[1]:.3f}, {pos_arr[2]:.3f}] | "
+                      f"基座速度OdomVel: [{vel_arr[0]:.3f}, {vel_arr[1]:.3f}, {vel_arr[2]:.3f}] | "
                       f"IMU四元数[w,x,y,z]: [{quat_arr[0]:.3f}, {quat_arr[1]:.3f}, {quat_arr[2]:.3f}, {quat_arr[3]:.3f}]")
             else:
                 print(f"   ⚠️ [第 {i+1} 秒] 读取状态失败")
