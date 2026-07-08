@@ -14,9 +14,204 @@ import yaml
 import os
 from common.ctrlcomp import PolicyOutput, StateAndCmd
 from FSM.FSM import FSM
-from common.utils import FSMCommand, FSMStateName, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat
+from common.utils import FSMCommand, FSMStateName, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat, quat_apply, subtract_frame_transforms, yaw_to_quat
 from common.joystick import JoyStick, JoystickButton
-from omnicontact_vision import VisionReceiver
+import threading
+
+class ROS2ArucoReceiver:
+    """
+    通过 ROS2 话题直接接收实机 ArUco/AprilTag 识别的物体位姿，取代原有 ZMQ/UDP vision_node。
+    支持监听及优先选择：/aruco/box_pose_torso_link, /aruco/box_pose_pelvis, /aruco/box_pose
+    """
+    def __init__(self, topic_torso="/aruco/box_pose_torso_link", topic_pelvis="/aruco/box_pose_pelvis", topic_cam="/aruco/box_pose"):
+        self.last_pose_torso = None
+        self.last_pose_pelvis = None
+        self.last_pose_cam = None
+        self.last_time = 0.0
+        self.lock = threading.Lock()
+        self.obj_pose_cv = None
+        
+        try:
+            import rclpy
+            from rclpy.node import Node
+            from geometry_msgs.msg import PoseStamped
+            if not rclpy.ok():
+                rclpy.init()
+            self.node = Node("omnicontact_ros2_aruco_sub")
+            self.node.create_subscription(PoseStamped, topic_torso, lambda msg: self._pose_callback(msg, "torso"), 10)
+            self.node.create_subscription(PoseStamped, topic_pelvis, lambda msg: self._pose_callback(msg, "pelvis"), 10)
+            self.node.create_subscription(PoseStamped, topic_cam, lambda msg: self._pose_callback(msg, "cam"), 10)
+            
+            self.spin_thread = threading.Thread(target=lambda: rclpy.spin(self.node), daemon=True)
+            self.spin_thread.start()
+            print(f"\n[ROS2ArucoReceiver] ✅ 成功启动 ROS2 监听后台线程！正在订阅以下位姿话题:\n  - {topic_cam} (优先: 相机系 /aruco/box_pose)\n  - {topic_pelvis} (次选: 骨盆系 /aruco/box_pose_pelvis)\n  - {topic_torso} (备选: 胸口系 /aruco/box_pose_torso_link)\n")
+        except Exception as e:
+            print(f"\n[ROS2ArucoReceiver] ℹ️ 原生 ROS2 节点加载失败 ({e})。自动启动 UDP 视觉桥接监听 (端口: 9876)...\n")
+            self._start_udp_listener(port=9876)
+
+    def _start_udp_listener(self, port=9876):
+        import socket, json
+        def udp_loop():
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("0.0.0.0", port))
+                print(f"[ROS2ArucoReceiver] ✅ UDP 视觉桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 AprilTag 位姿...")
+            except Exception as err:
+                print(f"[ROS2ArucoReceiver] ❌ UDP 端口 {port} 绑定失败: {err}")
+                return
+            while True:
+                try:
+                    data, _ = sock.recvfrom(4096)
+                    msg = json.loads(data.decode('utf-8'))
+                    if msg.get("type") == "aruco":
+                        frame_type = msg.get("frame")
+                        pos = np.array(msg["pos"], dtype=np.float32)
+                        quat = np.array(msg["quat"], dtype=np.float32)
+                        quat = quat / max(float(np.linalg.norm(quat)), 1e-8)
+                        with self.lock:
+                            self.last_time = time.time()
+                            if frame_type == "torso":
+                                self.last_pose_torso = (pos, quat)
+                            elif frame_type == "pelvis":
+                                self.last_pose_pelvis = (pos, quat)
+                            elif frame_type == "cam":
+                                self.last_pose_cam = (pos, quat)
+                except Exception:
+                    pass
+        self.spin_thread = threading.Thread(target=udp_loop, daemon=True)
+        self.spin_thread.start()
+
+    def _pose_callback(self, msg, frame_type):
+        pos = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z], dtype=np.float32)
+        q_ros = msg.pose.orientation
+        # ROS2 [x, y, z, w] 转换至 MuJoCo [w, x, y, z]
+        raw_q = np.array([q_ros.w, q_ros.x, q_ros.y, q_ros.z], dtype=np.float32)
+        quat = raw_q / max(float(np.linalg.norm(raw_q)), 1e-8)
+        
+        with self.lock:
+            self.last_time = time.time()
+            if frame_type == "torso":
+                self.last_pose_torso = (pos, quat)
+            elif frame_type == "pelvis":
+                self.last_pose_pelvis = (pos, quat)
+            elif frame_type == "cam":
+                self.last_pose_cam = (pos, quat)
+
+    def get_validated_world_pose(self, model, data):
+        with self.lock:
+            if time.time() - self.last_time > 0.5:
+                return None, None, False
+            pose_torso = self.last_pose_torso
+            pose_pelvis = self.last_pose_pelvis
+            pose_cam = self.last_pose_cam
+
+        # 1. 优先使用 /aruco/box_pose_pelvis (相对骨盆坐标系，直接叠加骨盆坐标，不受相机光学坐标系与MuJoCo朝向定义冲突的影响)
+        if pose_pelvis is not None:
+            p_rel, q_rel = pose_pelvis
+            pelvis_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+            if pelvis_id < 0:
+                pelvis_id = 0
+            p_pelvis_world = data.xpos[pelvis_id]
+            R_pelvis_world = data.xmat[pelvis_id].reshape(3, 3)
+            q_pelvis_world = data.xquat[pelvis_id]
+            
+            v_pos = p_pelvis_world + R_pelvis_world @ p_rel
+            v_quat = quat_mul(q_pelvis_world, q_rel)
+            v_quat = v_quat / max(float(np.linalg.norm(v_quat)), 1e-8)
+            return v_pos.astype(np.float32), v_quat.astype(np.float32), True
+
+        # 2. 次选使用 /aruco/box_pose_torso_link (相对胸腔坐标系)
+        if pose_torso is not None:
+            p_rel, q_rel = pose_torso
+            torso_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
+            if torso_id >= 0:
+                p_torso_world = data.xpos[torso_id]
+                R_torso_world = data.xmat[torso_id].reshape(3, 3)
+                q_torso_world = data.xquat[torso_id]
+                
+                v_pos = p_torso_world + R_torso_world @ p_rel
+                v_quat = quat_mul(q_torso_world, q_rel)
+                v_quat = v_quat / max(float(np.linalg.norm(v_quat)), 1e-8)
+                return v_pos.astype(np.float32), v_quat.astype(np.float32), True
+
+        # 3. 备选使用 /aruco/box_pose (相对相机坐标系)
+        if pose_cam is not None:
+            p_rel, q_rel = pose_cam
+            site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "d435_camera_frame")
+            if site_id >= 0:
+                p_cam_world = data.site_xpos[site_id]
+                R_cam_world = data.site_xmat[site_id].reshape(3, 3)
+            else:
+                cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "depth_camera")
+                if cam_id >= 0:
+                    p_cam_world = data.cam_xpos[cam_id]
+                    R_cam_world = data.cam_xmat[cam_id].reshape(3, 3)
+                else:
+                    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "d435_camera")
+                    if body_id >= 0:
+                        p_cam_world = data.xpos[body_id]
+                        R_cam_world = data.xmat[body_id].reshape(3, 3)
+                    else:
+                        return None, None, False
+
+            v_pos = p_cam_world + R_cam_world @ p_rel
+            q_cam_world = np.zeros(4, dtype=np.float64)
+            mujoco.mju_mat2Quat(q_cam_world, R_cam_world.astype(np.float64).flatten())
+            v_quat = quat_mul(q_cam_world.astype(np.float32), q_rel)
+            v_quat = v_quat / max(float(np.linalg.norm(v_quat)), 1e-8)
+            return v_pos.astype(np.float32), v_quat.astype(np.float32), True
+
+        return None, None, False
+
+    def get_validated_relative_poses(self, model, data, state_cmd):
+        with self.lock:
+            if time.time() - self.last_time > 0.5:
+                return None, None, None, None, False
+            pose_torso = self.last_pose_torso
+            pose_pelvis = self.last_pose_pelvis
+
+        upper_pos_rel, upper_quat_rel = None, None
+        lower_pos_rel, lower_quat_rel = None, None
+        valid = False
+
+        # 1. 针对 /aruco/box_pose_pelvis：通过 Unitree SDK (state_cmd.base_quat) 提取骨盆扭转角，进行偏航角旋转补偿
+        if pose_pelvis is not None:
+            p_ros, q_ros = pose_pelvis
+            base_q = state_cmd.base_quat
+            yaw_sdk = float(np.arctan2(2 * (base_q[0]*base_q[3] + base_q[1]*base_q[2]), 1 - 2 * (base_q[2]**2 + base_q[3]**2)))
+            cos_y, sin_y = np.cos(yaw_sdk), np.sin(yaw_sdk)
+            # 逆向旋转补偿：将写定相对骨盆正前方的坐标系补偿到实际物理骨盆系
+            R_comp = np.array([[cos_y, sin_y, 0], [-sin_y, cos_y, 0], [0, 0, 1]], dtype=np.float32)
+            upper_pos_rel = (R_comp @ p_ros).astype(np.float32)
+            q_comp = np.array([np.cos(-yaw_sdk/2), 0, 0, np.sin(-yaw_sdk/2)], dtype=np.float32)
+            upper_quat_rel = quat_mul(q_comp, q_ros)
+            upper_quat_rel = (upper_quat_rel / max(float(np.linalg.norm(upper_quat_rel)), 1e-8)).astype(np.float32)
+            valid = True
+
+        # 2. 针对 /aruco/box_pose_torso_link：对 yaw 方向进行单独处理 (剔除 Pitch/Roll)
+        if pose_torso is not None:
+            p_ros, q_ros = pose_torso
+            torso_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
+            t_quat = data.xquat[torso_id] if torso_id >= 0 else state_cmd.base_quat
+            t_quat_yaw = yaw_quat(t_quat)
+            # 计算从全姿态到只取 Yaw 姿态的旋转差：q_diff = q_yaw^(-1) * t_quat
+            q_diff = quat_mul(quat_conjugate(t_quat_yaw), t_quat)
+            R_diff = np.zeros((3, 3), dtype=np.float64)
+            mujoco.mju_quat2Mat(R_diff.flatten(), q_diff.astype(np.float64))
+            lower_pos_rel = (R_diff @ p_ros).astype(np.float32)
+            lower_quat_rel = quat_mul(q_diff.astype(np.float32), q_ros)
+            lower_quat_rel = (lower_quat_rel / max(float(np.linalg.norm(lower_quat_rel)), 1e-8)).astype(np.float32)
+            valid = True
+
+        return upper_pos_rel, upper_quat_rel, lower_pos_rel, lower_quat_rel, valid
+
+    def get_validated_goal_pose(self, model, data):
+        return None, False
+
+    def publish_image(self, img):
+        pass
+
 
 def pd_control(target_q, q, kp, target_dq, dq, kd, torque_limit_mj=None, torque_clip=True):
     """ Calculates torques from position commands """
@@ -358,14 +553,23 @@ if __name__ == "__main__":
 
     vision_receiver = None
     sim_renderer = None
-    if getattr(args, "use_vision", False) or getattr(args, "publish_sim_camera", False):
-        publish_sim = getattr(args, "publish_sim_camera", False) or getattr(args, "use_vision", False)
-        vision_receiver = VisionReceiver(
-            vision_port=getattr(args, "vision_port", 5556),
-            publish_sim_camera=publish_sim,
-        )
-        if publish_sim:
-            sim_renderer = mujoco.Renderer(m, 480, 640)
+    if getattr(args, "real", False) or getattr(args, "use_vision", False) or getattr(args, "publish_sim_camera", False):
+        if getattr(args, "real", False):
+            print("\n[Vision Setup] 🤖 检测到实机部署！启动 ROS2 ArUco/AprilTag 监听器，直接订阅 /aruco/box_pose_* 话题 (无须原生 vision_node)！")
+            args.use_vision = True
+            vision_receiver = ROS2ArucoReceiver()
+        else:
+            publish_sim = getattr(args, "publish_sim_camera", False) or getattr(args, "use_vision", False)
+            try:
+                from omnicontact_vision import VisionReceiver
+                vision_receiver = VisionReceiver(
+                    vision_port=getattr(args, "vision_port", 5556),
+                    publish_sim_camera=publish_sim,
+                )
+            except Exception as e:
+                print(f"[Vision Setup] 仿真视觉模块加载失败: {e}")
+            if publish_sim:
+                sim_renderer = mujoco.Renderer(m, 480, 640)
 
     def mj_id(obj_type, name: str) -> int:
         return mujoco.mj_name2id(m, obj_type, name)
@@ -570,21 +774,79 @@ if __name__ == "__main__":
         use_vis = getattr(args, "use_vision", False)
         if use_vis and vision_receiver is not None:
             v_pos, v_quat, valid = vision_receiver.get_validated_world_pose(m, d)
+            upper_p_rel, upper_q_rel, lower_p_rel, lower_q_rel, valid_rel = vision_receiver.get_validated_relative_poses(m, d, state_cmd)
+            g_pos, valid_goal = vision_receiver.get_validated_goal_pose(m, d)
+            if valid_goal and g_pos is not None:
+                goal_pos[:] = g_pos
+                if hasattr(contactflow_policy, "goal_pos"):
+                    contactflow_policy.goal_pos[:] = g_pos
+                if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
+                    contactflow_policy.goal_pos_override[:] = g_pos
+                table_z_offset = float(contactflow_policy.box_dims[2]) + 0.005
+                table_offset = np.array([0.0, 0.0, table_z_offset], dtype=np.float32)
+                set_table_positions(init_pos - table_offset, goal_pos - table_offset)
+
             gt_pos = d.xpos[box_body_id].copy()
             if valid and v_pos is not None:
-                state_cmd.obj_pos = init_pos.copy()
-                state_cmd.obj_quat = identity_quat.copy()
+                vision_cache["last_pos"] = v_pos.copy()
+                vision_cache["last_quat"] = v_quat.copy()
+                state_cmd.obj_pos = v_pos
+                state_cmd.obj_quat = v_quat
                 err = float(np.linalg.norm(v_pos - gt_pos))
                 if sim_counter % 40 == 0:
-                    print(f"\r[Vision Compare] 实际GT: [{gt_pos[0]:.3f}, {gt_pos[1]:.3f}, {gt_pos[2]:.3f}] | 解算Est: [{v_pos[0]:.3f}, {v_pos[1]:.3f}, {v_pos[2]:.3f}] | 误差Error: {err*100:.2f} cm   ", end="", flush=True)
+                    v_yaw = float(np.degrees(np.arctan2(2*(v_quat[0]*v_quat[3] + v_quat[1]*v_quat[2]), 1 - 2*(v_quat[2]**2 + v_quat[3]**2))))
+                    gt_quat = d.xquat[box_body_id]
+                    gt_yaw = float(np.degrees(np.arctan2(2*(gt_quat[0]*gt_quat[3] + gt_quat[1]*gt_quat[2]), 1 - 2*(gt_quat[2]**2 + gt_quat[3]**2))))
+                    print(f"\r[Vision Compare] GT: [{gt_pos[0]:.2f}, {gt_pos[1]:.2f}, {gt_pos[2]:.2f}] | Est: [{v_pos[0]:.2f}, {v_pos[1]:.2f}, {v_pos[2]:.2f}] | EstYaw: {v_yaw:.1f}° (GT: {gt_yaw:.1f}°) | 误差: {err*100:.1f} cm   ", end="", flush=True)
             else:
-                state_cmd.obj_pos = init_pos.copy()
-                state_cmd.obj_quat = identity_quat.copy()
-                if sim_counter % 40 == 0:
-                    print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
+                if real_robot is not None and vision_cache["last_pos"] is not None:
+                    state_cmd.obj_pos = vision_cache["last_pos"].copy()
+                    state_cmd.obj_quat = vision_cache["last_quat"].copy()
+                    if sim_counter % 40 == 0:
+                        print(f"\r[Vision Compare]  视觉丢帧/遮挡！真机已自动保持上次有效位姿", end="", flush=True)
+                else:
+                    state_cmd.obj_pos = gt_pos
+                    state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                    if sim_counter % 40 == 0:
+                        print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
+
+            if valid_rel:
+                if upper_p_rel is not None:
+                    vision_cache["last_rel_pelvis_pos"] = upper_p_rel.copy()
+                    vision_cache["last_rel_pelvis_quat"] = upper_q_rel.copy()
+                    state_cmd.rel_pelvis_pos = upper_p_rel
+                    state_cmd.rel_pelvis_quat = upper_q_rel
+                if lower_p_rel is not None:
+                    vision_cache["last_rel_torso_pos"] = lower_p_rel.copy()
+                    vision_cache["last_rel_torso_quat"] = lower_q_rel.copy()
+                    state_cmd.rel_torso_pos = lower_p_rel
+                    state_cmd.rel_torso_quat = lower_q_rel
+                state_cmd.use_direct_rel_poses = True
+            else:
+                if real_robot is not None and vision_cache.get("last_rel_pelvis_pos") is not None:
+                    state_cmd.rel_pelvis_pos = vision_cache["last_rel_pelvis_pos"].copy()
+                    state_cmd.rel_pelvis_quat = vision_cache["last_rel_pelvis_quat"].copy()
+                    if vision_cache.get("last_rel_torso_pos") is not None:
+                        state_cmd.rel_torso_pos = vision_cache["last_rel_torso_pos"].copy()
+                        state_cmd.rel_torso_quat = vision_cache["last_rel_torso_quat"].copy()
+                    state_cmd.use_direct_rel_poses = True
+                else:
+                    state_cmd.use_direct_rel_poses = False
         else:
-            state_cmd.obj_pos = init_pos.copy()
-            state_cmd.obj_quat = identity_quat.copy()
+            state_cmd.use_direct_rel_poses = False
+            if real_robot is not None and vision_cache["last_pos"] is not None:
+                state_cmd.obj_pos = vision_cache["last_pos"].copy()
+                state_cmd.obj_quat = vision_cache["last_quat"].copy()
+            else:
+                state_cmd.obj_pos = d.xpos[box_body_id].copy()
+                state_cmd.obj_quat = d.xquat[box_body_id].copy()
+        if should_apply_replan_object_quat_offset():
+            # Re-anchor a dropped box to a yaw-only baseline while keeping later relative in-hand tilt cues.
+            state_cmd.obj_quat = quat_mul(
+                replan_state.obj_quat_offset,
+                state_cmd.obj_quat.astype(np.float32),
+            ).astype(np.float32)
+            state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
 
     def replan_from_current_state(min_dist: float, in_contact: bool, obj_lin_speed: float, obj_ang_speed: float):
         if not wtac_carrybox_replan_enabled():
@@ -732,37 +994,59 @@ if __name__ == "__main__":
 
         return True, reset_counter
 
+    odom_calibration = {"initial_pos_xy": None, "initial_yaw_quat": None}
+    vision_cache = {"last_pos": None, "last_quat": None}
+
     def sync_robot_state():
         if real_robot is not None:
             res = real_robot.get_robot_state()
             if res is not None:
                 q, dq, quat, gyro, base_pos, lin_vel = res
+
+                # 修复真机无SLAM时的坐标漂移与沉地问题：
+                # 1. 若底层未给出物理绝对位姿(全0)，默认采用物理站立高度(m.qpos0[:3])；
+                # 若接收到了实时里程计，则锁定开机第一帧的XY作为坐标原点，保留后续位移。
+                if np.allclose(base_pos, 0.0):
+                    base_pos = m.qpos0[:3].copy()
+                else:
+                    if odom_calibration["initial_pos_xy"] is None:
+                        odom_calibration["initial_pos_xy"] = base_pos[:2].copy()
+                        print(f"\n[Odom Calibration] 🛰️ 锁定初始XY位移锚点: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}]")
+                    base_pos[0] -= odom_calibration["initial_pos_xy"][0]
+                    base_pos[1] -= odom_calibration["initial_pos_xy"][1]
+
+                # 2. 仅在首次开机时锁定并移除初始全局偏航角(Yaw Offset)，但在后续运动过程中保留真实的转弯角！
+                # 这样既能对齐物理工作空间，又能确保当机器人在行进中发生转向或受扰动时，RL 策略能实时感知自身朝向变化，解决向右跑偏且不回正的问题！
+                if odom_calibration["initial_yaw_quat"] is None:
+                    odom_calibration["initial_yaw_quat"] = yaw_quat(quat).astype(np.float32)
+                    print(f"[Odom Calibration] 🧭 锁定开机第一帧朝向四元数: [{odom_calibration['initial_yaw_quat'][0]:.3f}, {odom_calibration['initial_yaw_quat'][1]:.3f}, {odom_calibration['initial_yaw_quat'][2]:.3f}, {odom_calibration['initial_yaw_quat'][3]:.3f}]")
+                quat_aligned = quat_mul(quat_conjugate(odom_calibration["initial_yaw_quat"]), quat).astype(np.float32)
+                quat_aligned /= max(float(np.linalg.norm(quat_aligned)), 1e-8)
+
                 state_cmd.q = q.copy()
                 state_cmd.dq = dq.copy()
                 state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
                 state_cmd.base_pos = base_pos.copy()
-                state_cmd.base_quat = quat.copy()
+                state_cmd.base_quat = quat_aligned.copy()
                 state_cmd.ang_vel = gyro.copy()
                 state_cmd.lin_vel = lin_vel.copy()
 
                 d.qpos[:3] = base_pos
-                d.qpos[3:7] = quat
+                d.qpos[3:7] = quat_aligned
                 d.qpos[7 : 7 + num_joints] = q
                 d.qvel[:3] = lin_vel
                 d.qvel[3:6] = gyro
                 d.qvel[6 : 6 + num_joints] = dq
                 mujoco.mj_forward(m, d)
-            sync_object_state()
-            return
-
-        quat = d.qpos[3:7]
-        state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
-        state_cmd.dq = d.qvel[6 : 6 + num_joints].copy()
-        state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
-        state_cmd.base_pos = d.qpos[:3].copy()
-        state_cmd.base_quat = quat.copy()
-        state_cmd.ang_vel = d.qvel[3:6].copy()
-        state_cmd.lin_vel = d.qvel[0:3].copy()
+        else:
+            quat = d.qpos[3:7]
+            state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
+            state_cmd.dq = d.qvel[6 : 6 + num_joints].copy()
+            state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
+            state_cmd.base_pos = d.qpos[:3].copy()
+            state_cmd.base_quat = quat.copy()
+            state_cmd.ang_vel = d.qvel[3:6].copy()
+            state_cmd.lin_vel = d.qvel[0:3].copy()
         sync_object_state()
 
     def set_mocap_pose(mocap_name: str, pose):
@@ -824,70 +1108,243 @@ if __name__ == "__main__":
 
         for geom, contact in zip(ref_contact_geom_ids, contact_state):
             m.geom_rgba[geom] = reference_red if contact >= 0.5 else reference_yellow
-        
 
-    with mujoco.viewer.launch_passive(m, d) as viewer:
-        while viewer.is_running() and Running:
-            try:
-                Running, should_reset_counter = handle_joystick()
-                if should_reset_counter:
-                    sim_counter = 0
+    log_file_path = os.path.join(PROJECT_ROOT, "object_pose_logging.txt")
+    log_step_counter = 0
+    has_entered_loco = False
+    with open(log_file_path, "w", encoding="utf-8") as f:
+        f.write("# OmniContact 完整控制流与位姿调试日志 (每50帧记录一次)\n")
+        f.write("# 仅在接收到 ROS2 与 Unitree SDK 信息且调整至 loco-mode 之后开启记录\n")
+        f.write("# ------------------------------------------------------------------\n")
+        f.write("# 记录内容涵盖：\n")
+        f.write("# 1. [接收到的底层原始信息] ROS2视觉 AprilTag 话题 + Unitree SDK 物理反馈\n")
+        f.write("# 2. [给 cf-gen 的网络信息] 相对骨盆位姿(SDK扭转角补偿) + 目标点 + 尺寸\n")
+        f.write("# 3. [给 cf-tracker 的网络信息] 相对胸口位姿(Yaw投影) + 水平朝向 + 追踪轨迹\n")
+        f.write("# 4. [cf-tracker 输出指令] 关节电机目标角度/actions + 增益 kps/kds + 末端目标\n")
+        f.write("# ------------------------------------------------------------------\n\n")
 
-                step_start = time.time()
-                if sim_counter % control_decimation == 0:
-                    sync_robot_state()
-                    FSM_controller.run()
-                    maybe_closed_loop_replan()
+    try:
+        with mujoco.viewer.launch_passive(m, d) as viewer:
+            while viewer.is_running() and Running:
+                try:
+                    Running, should_reset_counter = handle_joystick()
+                    if should_reset_counter:
+                        sim_counter = 0
 
-                    policy_output_action = policy_output.actions.copy()
-                    kps = policy_output.kps.copy()
-                    kds = policy_output.kds.copy()
-                    wrist_state = policy_output.wrist_goal.copy()
-                    contact_state = policy_output.contact.copy()
-                    torso_goal = policy_output.torso_goal.copy()
-                    l_ankle_goal = policy_output.l_ankle_goal.copy()
-                    r_ankle_goal = policy_output.r_ankle_goal.copy()
+                    step_start = time.time()
+                    if sim_counter % control_decimation == 0:
+                        sync_robot_state()
+                        prev_policy = FSM_controller.cur_policy
+                        FSM_controller.run()
+                        if FSM_controller.cur_policy.name in [FSMStateName.LOCOMODE, FSMStateName.SKILL_OmniContact] or state_cmd.skill_cmd == FSMCommand.LOCO:
+                            if not has_entered_loco:
+                                has_entered_loco = True
+                                if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
+                                    print("\n[Odom] 机器人已切换至 LOCO 站立/工作模式，开始订阅 ROS2 /lio/odom 里程计并重置校准锚点！")
+                                    real_robot.subscribe_odom("/lio/odom")
+                                    odom_calibration["initial_pos_xy"] = None
+                                    odom_calibration["initial_yaw_quat"] = None
+
+                        if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy:
+                            print("\n[Odom Calibration] Switched to omnicontact, resetting odometry calibration and vision cache.")
+                            if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
+                                real_robot.subscribe_odom("/lio/odom")
+                            odom_calibration["initial_pos_xy"] = None
+                            odom_calibration["initial_yaw_quat"] = None
+                            vision_cache["last_pos"] = None
+                            vision_cache["last_quat"] = None
+                            sync_robot_state()
+                            if real_robot is not None:
+                                goal_pos[0] = 2.5
+                                goal_pos[1] = 0.0
+                                goal_pos[2] = float(contactflow_policy.box_dims[2])
+                                print(f"[Odom Calibration]实机模式切换至 omnicontact 默认生成前方 2.5m 目标点: [{goal_pos[0]:.3f}, {goal_pos[1]:.3f}, {goal_pos[2]:.3f}] (Z已锁定为地面箱体中心高度)")
+                                if hasattr(contactflow_policy, "goal_pos"):
+                                    contactflow_policy.goal_pos[:] = goal_pos
+                                if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
+                                    contactflow_policy.goal_pos_override[:] = goal_pos
+                        maybe_closed_loop_replan()
+
+                        policy_output_action = policy_output.actions.copy()
+                        kps = policy_output.kps.copy()
+                        kds = policy_output.kds.copy()
+                        wrist_state = policy_output.wrist_goal.copy()
+                        contact_state = policy_output.contact.copy()
+                        torso_goal = policy_output.torso_goal.copy()
+                        l_ankle_goal = policy_output.l_ankle_goal.copy()
+                        r_ankle_goal = policy_output.r_ankle_goal.copy()
+
+                        log_step_counter += 1
+                        if has_entered_loco and (log_step_counter % 50 == 0):
+                            if getattr(state_cmd, "use_direct_rel_poses", False) and hasattr(state_cmd, "rel_pelvis_pos") and state_cmd.rel_pelvis_pos is not None:
+                                upper_pos_rel = state_cmd.rel_pelvis_pos.copy()
+                                upper_quat_rel = state_cmd.rel_pelvis_quat.copy()
+                            else:
+                                inv_base = quat_conjugate(state_cmd.base_quat)
+                                upper_pos_rel = quat_apply(inv_base, state_cmd.obj_pos - state_cmd.base_pos)
+                                upper_quat_rel = quat_mul(inv_base, state_cmd.obj_quat)
+
+                            if getattr(state_cmd, "use_direct_rel_poses", False) and hasattr(state_cmd, "rel_torso_pos") and state_cmd.rel_torso_pos is not None:
+                                lower_pos_rel = state_cmd.rel_torso_pos.copy()
+                                lower_quat_rel = state_cmd.rel_torso_quat.copy()
+                            elif hasattr(contactflow_policy, "torso_pos") and hasattr(contactflow_policy, "torso_quat"):
+                                torso_heading = yaw_quat(contactflow_policy.torso_quat)
+                                lower_pos_rel, lower_quat_rel = subtract_frame_transforms(
+                                    contactflow_policy.torso_pos, torso_heading, state_cmd.obj_pos, state_cmd.obj_quat
+                                )
+                            else:
+                                torso_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
+                                t_pos = d.xpos[torso_id] if torso_id >= 0 else state_cmd.base_pos
+                                t_quat = d.xquat[torso_id] if torso_id >= 0 else state_cmd.base_quat
+                                lower_pos_rel, lower_quat_rel = subtract_frame_transforms(
+                                    t_pos, yaw_quat(t_quat), state_cmd.obj_pos, state_cmd.obj_quat
+                                )
+
+                            ros_cam_str = "None"
+                            ros_pelvis_str = "None"
+                            ros_torso_str = "None"
+                            if vision_receiver is not None:
+                                if vision_receiver.last_pose_cam is not None:
+                                    p, q = vision_receiver.last_pose_cam
+                                    ros_cam_str = f"Pos: [{p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}] | Quat: [{q[0]:.3f}, {q[1]:.3f}, {q[2]:.3f}, {q[3]:.3f}]"
+                                if vision_receiver.last_pose_pelvis is not None:
+                                    p, q = vision_receiver.last_pose_pelvis
+                                    ros_pelvis_str = f"Pos: [{p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}] | Quat: [{q[0]:.3f}, {q[1]:.3f}, {q[2]:.3f}, {q[3]:.3f}]"
+                                if vision_receiver.last_pose_torso is not None:
+                                    p, q = vision_receiver.last_pose_torso
+                                    ros_torso_str = f"Pos: [{p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}] | Quat: [{q[0]:.3f}, {q[1]:.3f}, {q[2]:.3f}, {q[3]:.3f}]"
+
+                            if ros_pelvis_str == "None":
+                                ros_pelvis_str = f"Pos: [{upper_pos_rel[0]:.3f}, {upper_pos_rel[1]:.3f}, {upper_pos_rel[2]:.3f}] | Quat: [{upper_quat_rel[0]:.3f}, {upper_quat_rel[1]:.3f}, {upper_quat_rel[2]:.3f}, {upper_quat_rel[3]:.3f}] (仿真/计算GT)"
+                            if ros_torso_str == "None":
+                                ros_torso_str = f"Pos: [{lower_pos_rel[0]:.3f}, {lower_pos_rel[1]:.3f}, {lower_pos_rel[2]:.3f}] | Quat: [{lower_quat_rel[0]:.3f}, {lower_quat_rel[1]:.3f}, {lower_quat_rel[2]:.3f}, {lower_quat_rel[3]:.3f}] (仿真/计算GT)"
+                            if ros_cam_str == "None":
+                                site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "d435_camera_frame")
+                                if site_id >= 0:
+                                    p_cam_w = d.site_xpos[site_id]
+                                    R_cam_w = d.site_xmat[site_id].reshape(3, 3)
+                                    q_cam_w = np.zeros(4, dtype=np.float64)
+                                    mujoco.mju_mat2Quat(q_cam_w, R_cam_w.astype(np.float64).flatten())
+                                    inv_q_cam = quat_conjugate(q_cam_w.astype(np.float32))
+                                    p_cam_rel = R_cam_w.T @ (state_cmd.obj_pos - p_cam_w)
+                                    q_cam_rel = quat_mul(inv_q_cam, state_cmd.obj_quat)
+                                    ros_cam_str = f"Pos: [{p_cam_rel[0]:.3f}, {p_cam_rel[1]:.3f}, {p_cam_rel[2]:.3f}] | Quat: [{q_cam_rel[0]:.3f}, {q_cam_rel[1]:.3f}, {q_cam_rel[2]:.3f}, {q_cam_rel[3]:.3f}] (仿真/计算GT)"
+                                else:
+                                    ros_cam_str = "None (未找到相机坐标系)"
+
+                            odom_source_str = "ROS2 /lio/odom 雷达里程计" if (real_robot is not None and getattr(real_robot, "ros2_base_pos", None) is not None) else "Unitree DDS/默认反馈"
+                            sdk_base_pos_str = f"[{state_cmd.base_pos[0]:.4f}, {state_cmd.base_pos[1]:.4f}, {state_cmd.base_pos[2]:.4f}] (m)"
+                            sdk_base_quat_str = f"[{state_cmd.base_quat[0]:.4f}, {state_cmd.base_quat[1]:.4f}, {state_cmd.base_quat[2]:.4f}, {state_cmd.base_quat[3]:.4f}]"
+                            sdk_vel_str = f"LinVel=[{state_cmd.lin_vel[0]:.3f}, {state_cmd.lin_vel[1]:.3f}, {state_cmd.lin_vel[2]:.3f}] m/s | AngVel=[{state_cmd.ang_vel[0]:.3f}, {state_cmd.ang_vel[1]:.3f}, {state_cmd.ang_vel[2]:.3f}] rad/s"
+                            sdk_q_str = f"Q(前6维腿部)=[{', '.join([f'{val:.3f}' for val in state_cmd.q[:6]])}] | DQ(前6维)=[{', '.join([f'{val:.3f}' for val in state_cmd.dq[:6]])}]"
+
+                            if hasattr(contactflow_policy, "torso_quat"):
+                                t_head = yaw_quat(contactflow_policy.torso_quat)
+                            else:
+                                t_head = yaw_quat(state_cmd.base_quat)
+                            heading_str = f"[{t_head[0]:.4f}, {t_head[1]:.4f}, {t_head[2]:.4f}, {t_head[3]:.4f}]"
+
+                            if hasattr(contactflow_policy, "ref_base_pos") and len(getattr(contactflow_policy, "ref_base_pos", [])) > 0:
+                                idx = min(contactflow_policy.counter_step, len(contactflow_policy.ref_base_pos) - 1)
+                                ref_bp = contactflow_policy.ref_base_pos[idx]
+                                ref_lw = contactflow_policy.ref_left_wrist_pos[idx]
+                                ref_rw = contactflow_policy.ref_right_wrist_pos[idx]
+                                ref_traj_str = f"Base: [{ref_bp[0]:.3f}, {ref_bp[1]:.3f}, {ref_bp[2]:.3f}] | LWrist: [{ref_lw[0]:.3f}, {ref_lw[1]:.3f}, {ref_lw[2]:.3f}] | RWrist: [{ref_rw[0]:.3f}, {ref_rw[1]:.3f}, {ref_rw[2]:.3f}]"
+                            else:
+                                ref_traj_str = "当前非轨迹追踪阶段或参考轨迹未生成"
+
+                            cur_policy_name = getattr(FSM_controller.cur_policy, "name_str", str(getattr(FSM_controller.cur_policy, "name", "Unknown")))
+                            act_leg_str = f"[{', '.join([f'{val:.3f}' for val in policy_output_action[:6]])}]"
+                            act_arm_str = f"[{', '.join([f'{val:.3f}' for val in policy_output_action[-6:]])}]"
+                            kp_str = f"均值={np.mean(kps):.1f} | 前6维=[{', '.join([f'{val:.1f}' for val in kps[:6]])}]"
+                            kd_str = f"均值={np.mean(kds):.2f} | 前6维=[{', '.join([f'{val:.2f}' for val in kds[:6]])}]"
+                            lwrist_goal_str = f"[{', '.join([f'{val:.3f}' for val in wrist_state[:7]])}]"
+                            rwrist_goal_str = f"[{', '.join([f'{val:.3f}' for val in wrist_state[7:14]])}]"
+                            torso_goal_str = f"[{', '.join([f'{val:.3f}' for val in torso_goal[:7]])}]"
+                            contact_goal_str = f"[{', '.join([f'{val:.2f}' for val in contact_state])}]"
+
+                            log_msg = (
+                                f"=== Step: {log_step_counter} (Sim: {sim_counter}, Time: {time.time()-step_start:.3f}s, Mode: {cur_policy_name}) ===\n"
+                                f"[1. 接收到的底层原始状态 (当前里程计来源: {odom_source_str})]\n"
+                                f"   * ROS2 相机光学系 (/aruco/box_pose): {ros_cam_str}\n"
+                                f"   * ROS2 相对骨盆系 (/aruco/box_pose_pelvis): {ros_pelvis_str}\n"
+                                f"   * ROS2 相对胸口系 (/aruco/box_pose_torso_link): {ros_torso_str}\n"
+                                f"   * 里程计位置 (Base Pos - {odom_source_str}): {sdk_base_pos_str}\n"
+                                f"   * 里程计朝向 (Base Quat - {odom_source_str}): {sdk_base_quat_str}\n"
+                                f"   * 里程计速度 (Velocities - {odom_source_str}): {sdk_vel_str}\n"
+                                f"   * 关节电机反馈 (Joints): {sdk_q_str}\n"
+                                f"[2. 最终给 cf-gen (上层轨迹规划网络) 的输入]\n"
+                                f"   * 相对参考系: 【pelvis】 (经 SDK 偏航扭转角旋转补偿)\n"
+                                f"   * 物体相对位置 (Pos): [{upper_pos_rel[0]:.4f}, {upper_pos_rel[1]:.4f}, {upper_pos_rel[2]:.4f}] (m)\n"
+                                f"   * 物体相对姿态 (Quat): [{upper_quat_rel[0]:.4f}, {upper_quat_rel[1]:.4f}, {upper_quat_rel[2]:.4f}, {upper_quat_rel[3]:.4f}]\n"
+                                f"   * 目标摆放位置 (Goal Pos): [{goal_pos[0]:.4f}, {goal_pos[1]:.4f}, {goal_pos[2]:.4f}] (m)\n"
+                                f"   * 物体边界尺寸 (Box Dims): [{contactflow_policy.box_dims[0]:.3f}, {contactflow_policy.box_dims[1]:.3f}, {contactflow_policy.box_dims[2]:.3f}] (m)\n"
+                                f"[3. 最终给 cf-tracker (底层 RL 控制策略网络) 的输入]\n"
+                                f"   * 相对参考系: 【torso_link】 (剔除俯仰与翻滚后的水平 Yaw 朝向系)\n"
+                                f"   * 物体相对位置 (Pos): [{lower_pos_rel[0]:.4f}, {lower_pos_rel[1]:.4f}, {lower_pos_rel[2]:.4f}] (m)\n"
+                                f"   * 物体相对姿态 (Quat): [{lower_quat_rel[0]:.4f}, {lower_quat_rel[1]:.4f}, {lower_quat_rel[2]:.4f}, {lower_quat_rel[3]:.4f}]\n"
+                                f"   * 机器人水平朝向 (Heading Quat): {heading_str}\n"
+                                f"   * 实时参考追踪目标 (Ref Traj): {ref_traj_str}\n"
+                                f"[4. cf-tracker 输出给机器人的控制指令]\n"
+                                f"   * 当前控制策略模式: {cur_policy_name}\n"
+                                f"   * 下发电机关节指令 Actions / Target Q (35维, 均值={np.mean(policy_output_action):.3f}):\n"
+                                f"     - 腿部前6关节示例: {act_leg_str}\n"
+                                f"     - 手臂后6关节示例: {act_arm_str}\n"
+                                f"   * 控制刚度增益 Kps: {kp_str}\n"
+                                f"   * 控制阻尼增益 Kds: {kd_str}\n"
+                                f"   * 左手腕目标 (L-Wrist Goal): {lwrist_goal_str}\n"
+                                f"   * 右手腕目标 (R-Wrist Goal): {rwrist_goal_str}\n"
+                                f"   * 胸腔目标 (Torso Goal): {torso_goal_str}\n"
+                                f"   * 预期接触状态 (Contact): {contact_goal_str}\n"
+                                f"------------------------------------------------------------------\n"
+                            )
+                            with open(log_file_path, "a", encoding="utf-8") as f:
+                                f.write(log_msg)
+
+                    if real_robot is not None:
+                        real_robot.send_joint_commands(
+                            policy_output_action,
+                            kps,
+                            kds,
+                        )
+                        robot_qpos = state_cmd.q
+                        robot_qvel = state_cmd.dq
+                        tau = pd_control(policy_output_action, robot_qpos, kps, np.zeros_like(kps), robot_qvel, kds, torque_limit_mj=torque_limit_mj)
+                        d.ctrl[:] = tau
+                        mujoco.mj_forward(m, d)
+                    else:
+                        robot_qpos = d.qpos[7 : 7 + num_joints]
+                        robot_qvel = d.qvel[6 : 6 + num_joints]
+                        tau = pd_control(
+                            policy_output_action,
+                            robot_qpos,
+                            kps,
+                            np.zeros_like(kps),
+                            robot_qvel,
+                            kds,
+                            torque_limit_mj=torque_limit_mj,
+                        )
+                        d.ctrl[:] = tau
+                        mujoco.mj_step(m, d)
+                    if sim_renderer is not None and vision_receiver is not None:
+                        sim_renderer.update_scene(d, camera="depth_camera")
+                        rgb_img = sim_renderer.render()
+                        vision_receiver.publish_image(rgb_img)
                     
-                if real_robot is not None:
-                    real_robot.send_joint_commands(
-                        policy_output_action,
-                        kps,
-                        kds,
-                    )
-                    robot_qpos = state_cmd.q
-                    robot_qvel = state_cmd.dq
-                    tau = pd_control(policy_output_action, robot_qpos, kps, np.zeros_like(kps), robot_qvel, kds, torque_limit_mj=torque_limit_mj)
-                    d.ctrl[:] = tau
-                    mujoco.mj_forward(m, d)
-                else:
-                    robot_qpos = d.qpos[7 : 7 + num_joints]
-                    robot_qvel = d.qvel[6 : 6 + num_joints]
-                    tau = pd_control(
-                        policy_output_action,
-                        robot_qpos,
-                        kps,
-                        np.zeros_like(kps),
-                        robot_qvel,
-                        kds,
-                        torque_limit_mj=torque_limit_mj,
-                    )
-                    d.ctrl[:] = tau
-                    mujoco.mj_step(m, d)
-                if sim_renderer is not None and vision_receiver is not None:
-                    sim_renderer.update_scene(d, camera="depth_camera")
-                    rgb_img = sim_renderer.render()
-                    vision_receiver.publish_image(rgb_img)
-                
-                update_reference_visualization()
+                    update_reference_visualization()
 
-                sim_counter += 1
-            except ValueError as e:
-                print(f"ValueError detected: {str(e)}")
-                print(f"Debug Info: num_joints={num_joints}, qpos.shape={d.qpos.shape}, qvel.shape={d.qvel.shape}")
-                break
-            
-            viewer.sync()
-            time_until_next_step = m.opt.timestep - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+                    sim_counter += 1
+                except ValueError as e:
+                    print(f"ValueError detected: {str(e)}")
+                    print(f"Debug Info: num_joints={num_joints}, qpos.shape={d.qpos.shape}, qvel.shape={d.qvel.shape}")
+                    break
+                
+                viewer.sync()
+                time_until_next_step = m.opt.timestep - (time.time() - step_start)
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)
+    finally:
+        if real_robot is not None:
+            print("[deploy] 正在退出程序，启动安全阻尼保护 (参考 Sonic CreateDampingCommand, kp=0, kd=8.0)...")
+            real_robot.stop()
         

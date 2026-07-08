@@ -598,7 +598,7 @@ if __name__ == "__main__":
                     state_cmd.obj_pos = vision_cache["last_pos"].copy()
                     state_cmd.obj_quat = vision_cache["last_quat"].copy()
                     if sim_counter % 40 == 0:
-                        print(f"\r[Vision Compare] ⚠️ 视觉丢帧/遮挡！真机已自动保持上次有效位姿 (防止瞬移回起点)   ", end="", flush=True)
+                        print(f"\r[Vision Compare]  视觉丢帧/遮挡！真机已自动保持上次有效位姿", end="", flush=True)
                 else:
                     state_cmd.obj_pos = gt_pos
                     state_cmd.obj_quat = d.xquat[box_body_id].copy()
@@ -882,6 +882,7 @@ if __name__ == "__main__":
 
     log_file_path = os.path.join(PROJECT_ROOT, "object_pose_logging.txt")
     log_step_counter = 0
+    has_entered_loco = False
     with open(log_file_path, "w", encoding="utf-8") as f:
         f.write("# OmniContact 物体位姿追踪日志 (每20帧记录一次)\n")
         f.write("# ------------------------------------------------------------------\n")
@@ -904,13 +905,32 @@ if __name__ == "__main__":
                         sync_robot_state()
                         prev_policy = FSM_controller.cur_policy
                         FSM_controller.run()
+                        if FSM_controller.cur_policy.name in [FSMStateName.LOCOMODE, FSMStateName.SKILL_OmniContact] or state_cmd.skill_cmd == FSMCommand.LOCO:
+                            if not has_entered_loco:
+                                has_entered_loco = True
+                                if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
+                                    print("\n[Odom] 机器人已切换至 LOCO 站立/工作模式，开始订阅 ROS2 /lio/odom 里程计并重置校准锚点！")
+                                    real_robot.subscribe_odom("/lio/odom")
+                                    odom_calibration["initial_pos_xy"] = None
+                                    odom_calibration["initial_yaw_quat"] = None
+
                         if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy:
                             print("\n[Odom Calibration] Switched to omnicontact, resetting odometry calibration and vision cache.")
+                            if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
+                                real_robot.subscribe_odom("/lio/odom")
                             odom_calibration["initial_pos_xy"] = None
                             odom_calibration["initial_yaw_quat"] = None
                             vision_cache["last_pos"] = None
                             vision_cache["last_quat"] = None
                             sync_robot_state()
+                            if real_robot is not None:
+                                goal_pos[0] = 2.5
+                                goal_pos[1] = 0.0
+                                print(f"[Odom Calibration]实机模式切换至 omnicontact 默认生成前方 2.5m 目标点: [{goal_pos[0]:.3f}, {goal_pos[1]:.3f}, {goal_pos[2]:.3f}]")
+                                if hasattr(contactflow_policy, "goal_pos"):
+                                    contactflow_policy.goal_pos[:] = goal_pos
+                                if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
+                                    contactflow_policy.goal_pos_override[:] = goal_pos
                         maybe_closed_loop_replan()
 
                         policy_output_action = policy_output.actions.copy()
@@ -924,14 +944,27 @@ if __name__ == "__main__":
 
                         log_step_counter += 1
                         if log_step_counter % 20 == 0:
-                            cam_pos_str, cam_quat_str = "None", "None"
-                            if vision_receiver is not None and getattr(vision_receiver, "obj_pose_cv", None) is not None:
+                            cam_pos_str = "None"
+                            cam_quat_str = "None"
+                            if vision_receiver is not None and vision_receiver.obj_pose_cv is not None:
                                 c_pos = vision_receiver.obj_pose_cv.get("pos", None)
                                 c_quat = vision_receiver.obj_pose_cv.get("quat", None)
                                 if c_pos is not None:
                                     cam_pos_str = f"[{c_pos[0]:.4f}, {c_pos[1]:.4f}, {c_pos[2]:.4f}]"
                                 if c_quat is not None:
                                     cam_quat_str = f"[{c_quat[0]:.4f}, {c_quat[1]:.4f}, {c_quat[2]:.4f}, {c_quat[3]:.4f}]"
+                            if cam_pos_str == "None":
+                                site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "d435_camera_frame")
+                                if site_id >= 0:
+                                    p_cam_w = d.site_xpos[site_id]
+                                    R_cam_w = d.site_xmat[site_id].reshape(3, 3)
+                                    p_cam_rel = R_cam_w.T @ (state_cmd.obj_pos - p_cam_w)
+                                    cam_pos_str = f"[{p_cam_rel[0]:.4f}, {p_cam_rel[1]:.4f}, {p_cam_rel[2]:.4f}] (仿真GT)"
+                                    q_cam_w = np.zeros(4, dtype=np.float64)
+                                    mujoco.mju_mat2Quat(q_cam_w, R_cam_w.astype(np.float64).flatten())
+                                    inv_q_cam = quat_conjugate(q_cam_w.astype(np.float32))
+                                    q_cam_rel = quat_mul(inv_q_cam, state_cmd.obj_quat)
+                                    cam_quat_str = f"[{q_cam_rel[0]:.4f}, {q_cam_rel[1]:.4f}, {q_cam_rel[2]:.4f}, {q_cam_rel[3]:.4f}] (仿真GT)"
 
                             inv_base = quat_conjugate(state_cmd.base_quat)
                             upper_pos_rel = quat_apply(inv_base, state_cmd.obj_pos - state_cmd.base_pos)

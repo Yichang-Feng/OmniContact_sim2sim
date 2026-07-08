@@ -43,18 +43,12 @@ class RealRobotInterfacePy:
         self.pub = ChannelPublisher("rt/lowcmd", LowCmd_)
         self.pub.Init()
 
-        try:
-            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import OdoState_
-            self.odo_sub = ChannelSubscriber("rt/odostate", OdoState_)
-            self.odo_sub.Init(self._odo_handler, 10)
-        except Exception:
-            pass
-        try:
-            from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
-            self.sport_sub = ChannelSubscriber("rt/odommodestate", SportModeState_)
-            self.sport_sub.Init(self._sport_handler, 10)
-        except Exception:
-            pass
+        self.odom_enabled = False
+        self.ros2_base_pos = None
+        self.ros2_lin_vel = None
+        self.ros2_quat = None
+        self.odo_sub = None
+        self.sport_sub = None
 
         self.cmd_lock = threading.Lock()
         self.current_cmd = self._create_passive_cmd()
@@ -104,6 +98,82 @@ class RealRobotInterfacePy:
     def _sport_handler(self, msg):
         self.sport_state = msg
 
+    def _ros2_odom_handler(self, msg):
+        if not getattr(self, "odom_enabled", False):
+            return
+        pos = msg.pose.pose.position
+        vel = msg.twist.twist.linear
+        q_ros = msg.pose.pose.orientation
+        self.ros2_base_pos = np.array([pos.x, pos.y, pos.z], dtype=np.float32)
+        self.ros2_lin_vel = np.array([vel.x, vel.y, vel.z], dtype=np.float32)
+        raw_q = np.array([q_ros.w, q_ros.x, q_ros.y, q_ros.z], dtype=np.float32)
+        self.ros2_quat = raw_q / max(float(np.linalg.norm(raw_q)), 1e-8)
+
+    def subscribe_odom(self, topic_name="/lio/odom"):
+        """
+        在实机部署中，当通过手柄切换到 omnicontact 任务时，主动触发订阅里程计信息（兼容 ROS2 /lio/odom 及 DDS）。
+        """
+        print(f"[RealRobotInterface] 🚀 触发订阅里程计数据 (ROS2 topic: {topic_name} 及底层 DDS)...")
+        self.odom_enabled = True
+        try:
+            import rclpy
+            from rclpy.node import Node
+            from nav_msgs.msg import Odometry
+            if not rclpy.ok():
+                rclpy.init()
+            if not hasattr(self, "ros2_node") or self.ros2_node is None:
+                self.ros2_node = Node("real_robot_odom_sub")
+                self.ros2_node.create_subscription(Odometry, topic_name, self._ros2_odom_handler, 10)
+                self.ros2_thread = threading.Thread(target=lambda: rclpy.spin(self.ros2_node), daemon=True)
+                self.ros2_thread.start()
+                print(f"[RealRobotInterface] ✅ 成功建立 ROS2 订阅后台线程: {topic_name}")
+        except Exception as e:
+            print(f"[RealRobotInterface] ℹ️ 原生 ROS2 订阅未启动 ({e})。自动启动 UDP 里程计桥接监听 (端口: 9877)...")
+            self._start_udp_odom_listener(port=9877)
+
+    def _start_udp_odom_listener(self, port=9877):
+        import socket, json
+        def udp_loop():
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("0.0.0.0", port))
+                print(f"[RealRobotInterface] ✅ UDP 里程计桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 /lio/odom...")
+            except Exception as err:
+                print(f"[RealRobotInterface] ❌ UDP 端口 {port} 绑定失败: {err}")
+                return
+            while True:
+                try:
+                    data, _ = sock.recvfrom(4096)
+                    msg = json.loads(data.decode('utf-8'))
+                    if msg.get("type") == "odom":
+                        pos = np.array(msg["pos"], dtype=np.float32)
+                        quat = np.array(msg["quat"], dtype=np.float32)
+                        quat = quat / max(float(np.linalg.norm(quat)), 1e-8)
+                        lin_vel = np.array(msg["lin_vel"], dtype=np.float32)
+                        self.ros2_base_pos = pos
+                        self.ros2_quat = quat
+                        self.ros2_lin_vel = lin_vel
+                except Exception:
+                    pass
+        self.ros2_thread = threading.Thread(target=udp_loop, daemon=True)
+        self.ros2_thread.start()
+
+        if self.odo_sub is None:
+            try:
+                from unitree_sdk2py.idl.unitree_hg.msg.dds_ import OdoState_
+                self.odo_sub = ChannelSubscriber("rt/odostate", OdoState_)
+                self.odo_sub.Init(self._odo_handler, 10)
+            except Exception:
+                pass
+        if self.sport_sub is None:
+            try:
+                from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+                self.sport_sub = ChannelSubscriber("rt/odommodestate", SportModeState_)
+                self.sport_sub.Init(self._sport_handler, 10)
+            except Exception:
+                pass
+
     def wait_for_connection(self, timeout=60.0):
         start = time.time()
         last_print = 0.0
@@ -140,7 +210,15 @@ class RealRobotInterfacePy:
         quat = np.array(raw_q, dtype=np.float32)
         gyro = np.array(ls.imu_state.gyroscope, dtype=np.float32)
 
-        if self.odo_state is not None:
+        if not getattr(self, "odom_enabled", False):
+            base_pos = np.zeros(3, dtype=np.float32)
+            lin_vel = np.zeros(3, dtype=np.float32)
+        elif getattr(self, "ros2_base_pos", None) is not None:
+            base_pos = self.ros2_base_pos.copy()
+            lin_vel = self.ros2_lin_vel.copy()
+            if getattr(self, "ros2_quat", None) is not None:
+                quat = self.ros2_quat.copy()
+        elif self.odo_state is not None:
             base_pos = np.array(self.odo_state.position[:3], dtype=np.float32)
             lin_vel = np.array(self.odo_state.linear_velocity[:3], dtype=np.float32)
         elif self.sport_state is not None:
@@ -271,6 +349,10 @@ class RealRobotInterfaceCpp:
         self.pos_buf = (ctypes.c_float * 3)()
         self.vel_buf = (ctypes.c_float * 3)()
         self.mode_machine_buf = ctypes.c_uint32()
+        self.odom_enabled = False
+        self.ros2_base_pos = None
+        self.ros2_lin_vel = None
+        self.ros2_quat = None
 
     def wait_for_connection(self, timeout=60.0):
         if not self.handle:
@@ -289,9 +371,76 @@ class RealRobotInterfaceCpp:
         dq = np.ctypeslib.as_array(self.dq_buf).copy()
         quat = np.ctypeslib.as_array(self.quat_buf).copy()
         gyro = np.ctypeslib.as_array(self.gyro_buf).copy()
-        base_pos = np.ctypeslib.as_array(self.pos_buf).copy()
-        lin_vel = np.ctypeslib.as_array(self.vel_buf).copy()
+        if not getattr(self, "odom_enabled", False):
+            base_pos = np.zeros(3, dtype=np.float32)
+            lin_vel = np.zeros(3, dtype=np.float32)
+        elif getattr(self, "ros2_base_pos", None) is not None:
+            base_pos = self.ros2_base_pos.copy()
+            lin_vel = self.ros2_lin_vel.copy()
+            if getattr(self, "ros2_quat", None) is not None:
+                quat = self.ros2_quat.copy()
+        else:
+            base_pos = np.ctypeslib.as_array(self.pos_buf).copy()
+            lin_vel = np.ctypeslib.as_array(self.vel_buf).copy()
         return q, dq, quat, gyro, base_pos, lin_vel
+
+    def _ros2_odom_handler(self, msg):
+        if not getattr(self, "odom_enabled", False):
+            return
+        pos = msg.pose.pose.position
+        vel = msg.twist.twist.linear
+        q_ros = msg.pose.pose.orientation
+        self.ros2_base_pos = np.array([pos.x, pos.y, pos.z], dtype=np.float32)
+        self.ros2_lin_vel = np.array([vel.x, vel.y, vel.z], dtype=np.float32)
+        raw_q = np.array([q_ros.w, q_ros.x, q_ros.y, q_ros.z], dtype=np.float32)
+        self.ros2_quat = raw_q / max(float(np.linalg.norm(raw_q)), 1e-8)
+
+    def subscribe_odom(self, topic_name="/lio/odom"):
+        print(f"[RealRobotInterfaceCpp] 🚀 触发订阅里程计数据 (ROS2: {topic_name} 及底层 DDS)...")
+        self.odom_enabled = True
+        try:
+            import rclpy
+            from rclpy.node import Node
+            from nav_msgs.msg import Odometry
+            if not rclpy.ok():
+                rclpy.init()
+            if not hasattr(self, "ros2_node") or self.ros2_node is None:
+                self.ros2_node = Node("real_robot_odom_sub_cpp")
+                self.ros2_node.create_subscription(Odometry, topic_name, self._ros2_odom_handler, 10)
+                self.ros2_thread = threading.Thread(target=lambda: rclpy.spin(self.ros2_node), daemon=True)
+                self.ros2_thread.start()
+                print(f"[RealRobotInterfaceCpp] ✅ 成功建立 ROS2 订阅后台线程: {topic_name}")
+        except Exception as e:
+            print(f"[RealRobotInterfaceCpp] ℹ️ 原生 ROS2 订阅未启动 ({e})。自动启动 UDP 里程计桥接监听 (端口: 9877)...")
+            self._start_udp_odom_listener(port=9877)
+
+    def _start_udp_odom_listener(self, port=9877):
+        import socket, json
+        def udp_loop():
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("0.0.0.0", port))
+                print(f"[RealRobotInterfaceCpp] ✅ UDP 里程计桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 /lio/odom...")
+            except Exception as err:
+                print(f"[RealRobotInterfaceCpp] ❌ UDP 端口 {port} 绑定失败: {err}")
+                return
+            while True:
+                try:
+                    data, _ = sock.recvfrom(4096)
+                    msg = json.loads(data.decode('utf-8'))
+                    if msg.get("type") == "odom":
+                        pos = np.array(msg["pos"], dtype=np.float32)
+                        quat = np.array(msg["quat"], dtype=np.float32)
+                        quat = quat / max(float(np.linalg.norm(quat)), 1e-8)
+                        lin_vel = np.array(msg["lin_vel"], dtype=np.float32)
+                        self.ros2_base_pos = pos
+                        self.ros2_quat = quat
+                        self.ros2_lin_vel = lin_vel
+                except Exception:
+                    pass
+        self.ros2_thread = threading.Thread(target=udp_loop, daemon=True)
+        self.ros2_thread.start()
 
     def send_joint_commands(self, target_q, kps, kds, target_dq=None, tau_ff=None):
         if not self.handle:

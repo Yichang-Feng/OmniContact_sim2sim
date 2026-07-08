@@ -387,6 +387,12 @@ class OmniContact(FSMState):
     def _build_bbox_rel(self, robot_heading: np.ndarray) -> np.ndarray:
         # Vectorized over 8 bbox corners to reduce Python-loop overhead.
         offsets = self.bbox_offsets_scaled.astype(np.float32)
+        if getattr(self.state_cmd, "use_direct_rel_poses", False) and hasattr(self.state_cmd, "rel_torso_pos") and self.state_cmd.rel_torso_pos is not None:
+            obj_pos_rel = self.state_cmd.rel_torso_pos.astype(np.float32)
+            obj_rot_rel = self.state_cmd.rel_torso_quat.astype(np.float32)
+            bbox_rel = quat_apply_batch(obj_rot_rel, offsets) + obj_pos_rel[None, :]
+            bbox_rel = self._clip_norm(bbox_rel).astype(np.float32)
+            return bbox_rel.reshape(-1)
         obj_quat = self.state_cmd.obj_quat.astype(np.float32)
         obj_pos = self.state_cmd.obj_pos.astype(np.float32)
         torso_pos = self.torso_pos.astype(np.float32)
@@ -407,9 +413,13 @@ class OmniContact(FSMState):
         dqj = self.state_cmd.dq[self.mj2lab].astype(np.float32)
         robot_heading = yaw_quat(self.torso_quat)
 
-        obj_pos_rel, obj_rot_rel = subtract_frame_transforms(
-            self.torso_pos, robot_heading, self.state_cmd.obj_pos, self.state_cmd.obj_quat
-        )
+        if getattr(self.state_cmd, "use_direct_rel_poses", False) and hasattr(self.state_cmd, "rel_torso_pos") and self.state_cmd.rel_torso_pos is not None:
+            obj_pos_rel = self.state_cmd.rel_torso_pos.copy()
+            obj_rot_rel = self.state_cmd.rel_torso_quat.copy()
+        else:
+            obj_pos_rel, obj_rot_rel = subtract_frame_transforms(
+                self.torso_pos, robot_heading, self.state_cmd.obj_pos, self.state_cmd.obj_quat
+            )
         obj_pos_rel = self._clip_norm(obj_pos_rel)
         if self.task in {"relocateball", "kickball"} or self.active_object_name == "ball":
             obj_rot_rel = np.array([1, 0, 0, 0], dtype=np.float32) # placeholder for zero rotation

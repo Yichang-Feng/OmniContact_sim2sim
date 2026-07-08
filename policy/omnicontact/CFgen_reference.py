@@ -1,6 +1,7 @@
 from typing import Any
 
 import numpy as np
+from common.utils import quat_apply, quat_mul
 
 from policy.omnicontact.CFgen_meta1_loco import CfGenLoco
 from policy.omnicontact.CFgen_meta2_carrybox import CfGenCarryBox
@@ -143,11 +144,20 @@ def plan_cfgen_reference(policy: Any, fk_info: dict) -> None:
         set_active_object_profile(policy, object_profile, policy.box_dims)
 
     policy.traj_generator = cfgen_cls(pad=30)
+    pelvis_p = fk_info["pelvis"]["pos"]
+    pelvis_q = fk_info["pelvis"]["quat"]
+    if getattr(policy.state_cmd, "use_direct_rel_poses", False) and hasattr(policy.state_cmd, "rel_pelvis_pos") and policy.state_cmd.rel_pelvis_pos is not None:
+        obj_p = pelvis_p + quat_apply(pelvis_q, policy.state_cmd.rel_pelvis_pos)
+        obj_q = quat_mul(pelvis_q, policy.state_cmd.rel_pelvis_quat)
+    else:
+        obj_p = policy.state_cmd.obj_pos.copy()
+        obj_q = policy.state_cmd.obj_quat.copy()
+
     generate_kwargs = dict(
-        pelvis_pos=fk_info["pelvis"]["pos"],
-        pelvis_quat=fk_info["pelvis"]["quat"],
-        obj_pos=policy.state_cmd.obj_pos.copy(),
-        obj_quat=policy.state_cmd.obj_quat.copy(),
+        pelvis_pos=pelvis_p,
+        pelvis_quat=pelvis_q,
+        obj_pos=obj_p,
+        obj_quat=obj_q,
         box_half_dims=policy.box_dims,
         target_obj_pos=plan_goal,
     )
