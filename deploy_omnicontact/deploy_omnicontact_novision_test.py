@@ -1179,38 +1179,9 @@ if __name__ == "__main__":
                         sync_robot_state()
                         prev_policy = FSM_controller.cur_policy
 
-                        # 【核心防突变机制】在 FSM_controller.run() 真正执行策略切换（内部将自动调用 contactflow_policy.enter()）前，
-                        # 提前检测前一个策略状态是否准备切换到 omnicontact (SKILL_OmniContact)。
-                        # 若检测到准备进入 omnicontact，则在 enter() 之前先清零校准里程计并完成状态同步。
-                        # 这样当随后 FSM_controller.run() 内部执行 OmniContact.enter() 时，
-                        # 其获取到的 state_cmd.base_pos 将完全准确对准当前真实归零坐标 [0.0, 0.0, 0.77]，
-                        # 同时 enter() 内部的 obs_history_buffer.fill(0) 能够彻底抹除所有切模式前的旧里程计与动作记录，
-                        # 完美消除旧归零逻辑中调用两次 run()、在 obs_history_buffer 制造~1.89m阶跃跳变，导致神经网络产生假想超高速碰撞并疯狂抬脚猛踹倒地的问题！
-                        is_switching_to_omni = (
-                            prev_policy is not contactflow_policy
-                            and state_cmd.skill_cmd == FSMCommand.SKILL_OmniContact
-                        )
-                        if is_switching_to_omni:
-                            print("\n[Odom Calibration] 检测到准备进入 omnicontact 模式！在调用策略 enter() 前完成里程计校准锁零...")
-                            if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
-                                real_robot.subscribe_odom("/lio/odom")
-                            odom_calibration["initial_pos_xy"] = None
-                            odom_calibration["initial_pos_z"] = None
-                            odom_calibration["initial_yaw_quat"] = None
-                            vision_cache["last_pos"] = None
-                            vision_cache["last_quat"] = None
-                            sync_robot_state()
-                            forward_dist = float(args.goal_pos[0]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 2.0
-                            lateral_dist = float(args.goal_pos[1]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 0.0
-                            goal_pos[0] = forward_dist
-                            goal_pos[1] = lateral_dist
-                            goal_pos[2] = float(contactflow_policy.box_dims[2])
-                            print(f"[Odom Calibration] 切换前已完成里程计锚点归零锁定，正前方目标点设置: [{goal_pos[0]:.3f}, {goal_pos[1]:.3f}, {goal_pos[2]:.3f}]")
-                            if hasattr(contactflow_policy, "goal_pos"):
-                                contactflow_policy.goal_pos[:] = goal_pos
-                            if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
-                                contactflow_policy.goal_pos_override[:] = goal_pos
-
+                        # 【模拟旧实机缺陷逻辑对比实验】
+                        # 故意移除提前归零校准和 buffer 清零：先让 FSM_controller.run() 执行旧坐标计算，
+                        # 随后在下方进行坐标瞬移清零，但不过滤/清空 obs_history_buffer 且再次强行执行第二遍 run()！
                         FSM_controller.run()
 
                         if FSM_controller.cur_policy.name in [FSMStateName.LOCOMODE, FSMStateName.SKILL_OmniContact] or state_cmd.skill_cmd == FSMCommand.LOCO:
@@ -1223,9 +1194,9 @@ if __name__ == "__main__":
                                     odom_calibration["initial_pos_z"] = None
                                     odom_calibration["initial_yaw_quat"] = None
 
-                        # 保底兜底：若前序非 checkChange 触发而是直接手动改变 cur_policy 切换至 omnicontact，则确保同样重新调用 enter() 与归零，绝不重复叠加 run()
-                        if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy and not is_switching_to_omni:
-                            print("\n[Odom Calibration] 兜底检测到已直接切换至 omnicontact，进行重置校准并执行 enter() 归零缓冲...")
+                        # 【旧版缺陷切换处理块】在 FSM_controller.run() 后才清零坐标，并且不清空缓冲直接进行二次计算！
+                        if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy:
+                            print("\n[旧版缺陷逻辑复现] 模式已切换至 omnicontact！此刻才进行坐标突变零点锁定，并且故意不执行 enter() 清空历史 buffer，直接第二次调用 run()...")
                             if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
                                 real_robot.subscribe_odom("/lio/odom")
                             odom_calibration["initial_pos_xy"] = None
@@ -1243,7 +1214,8 @@ if __name__ == "__main__":
                                 contactflow_policy.goal_pos[:] = goal_pos
                             if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
                                 contactflow_policy.goal_pos_override[:] = goal_pos
-                            contactflow_policy.enter()
+                            # 模拟旧代码行为：把 step 设回 0，但不执行 enter() 清空 self.obs_history_buffer！
+                            contactflow_policy.counter_step = 0
                             contactflow_policy.run()
 
                         maybe_closed_loop_replan()

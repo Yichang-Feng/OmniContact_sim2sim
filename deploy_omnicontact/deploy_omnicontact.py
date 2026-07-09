@@ -467,6 +467,8 @@ if __name__ == "__main__":
     right_palm_body_id = body_id("right_palm_link")
     left_wrist_yaw_body_id = body_id("left_wrist_yaw_link")
     right_wrist_yaw_body_id = body_id("right_wrist_yaw_link")
+    mid360_site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "mid360_link")
+    mid360_body_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "mid360_link") if mid360_site_id < 0 else -1
 
     def body_geom_ids(body_id: int) -> list[int]:
         if body_id < 0:
@@ -619,6 +621,20 @@ if __name__ == "__main__":
             ).astype(np.float32)
             state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
 
+        # 确保物体坐标与已校准的里程计局部坐标完全统一
+        if not getattr(state_cmd, "use_direct_rel_poses", False):
+            if odom_calibration["initial_pos_xy"] is not None:
+                state_cmd.obj_pos[0] -= odom_calibration["initial_pos_xy"][0]
+                state_cmd.obj_pos[1] -= odom_calibration["initial_pos_xy"][1]
+            if odom_calibration.get("initial_pos_z") is not None:
+                state_cmd.obj_pos[2] = (state_cmd.obj_pos[2] - odom_calibration["initial_pos_z"]) + m.qpos0[2]
+            if odom_calibration["initial_yaw_quat"] is not None:
+                rel_vec = state_cmd.obj_pos - state_cmd.base_pos
+                rel_vec_rot = quat_apply(quat_conjugate(odom_calibration["initial_yaw_quat"]), rel_vec)
+                state_cmd.obj_pos = state_cmd.base_pos + rel_vec_rot
+                state_cmd.obj_quat = quat_mul(quat_conjugate(odom_calibration["initial_yaw_quat"]), state_cmd.obj_quat).astype(np.float32)
+                state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
+
     def replan_from_current_state(min_dist: float, in_contact: bool, obj_lin_speed: float, obj_ang_speed: float):
         if not wtac_carrybox_replan_enabled():
             return
@@ -765,7 +781,7 @@ if __name__ == "__main__":
 
         return True, reset_counter
 
-    odom_calibration = {"initial_pos_xy": None, "initial_yaw_quat": None}
+    odom_calibration = {"initial_pos_xy": None, "initial_pos_z": None, "initial_yaw_quat": None}
     vision_cache = {"last_pos": None, "last_quat": None}
 
     def sync_robot_state():
@@ -776,15 +792,18 @@ if __name__ == "__main__":
 
                 # 修复真机无SLAM时的坐标漂移与沉地问题：
                 # 1. 若底层未给出物理绝对位姿(全0)，默认采用物理站立高度(m.qpos0[:3])；
-                # 若接收到了实时里程计，则锁定开机第一帧的XY作为坐标原点，保留后续位移。
+                # 若接收到了实时里程计，则锁定开机第一帧的XY与Z作为坐标原点，保留后续XY位移并自动校准绝对Z站立高度。
                 if np.allclose(base_pos, 0.0):
                     base_pos = m.qpos0[:3].copy()
                 else:
-                    if odom_calibration["initial_pos_xy"] is None:
+                    if odom_calibration["initial_pos_xy"] is None or odom_calibration.get("initial_pos_z") is None:
                         odom_calibration["initial_pos_xy"] = base_pos[:2].copy()
-                        print(f"\n[Odom Calibration] 🛰️ 锁定初始XY位移锚点: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}]")
+                        odom_calibration["initial_pos_z"] = float(base_pos[2])
+                        print(f"\n[Odom Calibration] 🛰️ 锁定初始位移锚点 XY: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}], Z: {odom_calibration['initial_pos_z']:.3f}m")
                     base_pos[0] -= odom_calibration["initial_pos_xy"][0]
                     base_pos[1] -= odom_calibration["initial_pos_xy"][1]
+                    if odom_calibration.get("initial_pos_z") is not None:
+                        base_pos[2] = (base_pos[2] - odom_calibration["initial_pos_z"]) + m.qpos0[2]
 
                 # 2. 仅在首次开机时锁定并移除初始全局偏航角(Yaw Offset)，但在后续运动过程中保留真实的转弯角！
                 # 这样既能对齐物理工作空间，又能确保当机器人在行进中发生转向或受扰动时，RL 策略能实时感知自身朝向变化，解决向右跑偏且不回正的问题！
@@ -810,12 +829,35 @@ if __name__ == "__main__":
                 d.qvel[6 : 6 + num_joints] = dq
                 mujoco.mj_forward(m, d)
         else:
-            quat = d.qpos[3:7]
+            # 【完全对齐真机硬件 IMU 与里程计分工】
+            # 1. 机器人身体姿态 quat 和角速度始终来自物理机身 IMU (d.qpos[3:7] / gyro)，切勿使用带 2.3° 机械倾角的雷达安装框 (mid360_quat) 覆盖，否则会导致重心误判与往后倒退！
+            quat = d.qpos[3:7].copy()
+            # 2. 里程计位置 base_pos 读取当前物理位置 (d.qpos[:3])，并执行对齐校准
+            # 彻底排除由于高位雷达在躯干俯仰(拥抱纸箱)时引起的胸晃位移和竖直下沉杠杆臂干扰！
+            raw_odom_pos = d.qpos[:3].copy().astype(np.float32)
+
+            base_pos = raw_odom_pos.copy()
+            if odom_calibration["initial_pos_xy"] is None or odom_calibration.get("initial_pos_z") is None:
+                odom_calibration["initial_pos_xy"] = base_pos[:2].copy()
+                odom_calibration["initial_pos_z"] = float(base_pos[2])
+                print(f"\n[Sim Odom Calibration] 🛰️ 仿真模式锁定雷达里程计锚点 XY: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}], 原始雷达Z: {odom_calibration['initial_pos_z']:.3f}m -> 映射对齐至目标站立高: {m.qpos0[2]:.3f}m")
+            base_pos[0] -= odom_calibration["initial_pos_xy"][0]
+            base_pos[1] -= odom_calibration["initial_pos_xy"][1]
+            if odom_calibration.get("initial_pos_z") is not None:
+                # 无论雷达/传感器起点在 1.26m、-0.45m 还是 0.0m，都通过 (当前Z - 初始Z) + m.qpos0[2] 映射到物理目标高度 0.77m
+                base_pos[2] = (base_pos[2] - odom_calibration["initial_pos_z"]) + m.qpos0[2]
+
+            if odom_calibration["initial_yaw_quat"] is None:
+                odom_calibration["initial_yaw_quat"] = yaw_quat(quat).astype(np.float32)
+                print(f"[Sim Odom Calibration] 🧭 仿真模式锁定开机第一帧朝向四元数: [{odom_calibration['initial_yaw_quat'][0]:.3f}, {odom_calibration['initial_yaw_quat'][1]:.3f}, {odom_calibration['initial_yaw_quat'][2]:.3f}, {odom_calibration['initial_yaw_quat'][3]:.3f}]")
+            quat_aligned = quat_mul(quat_conjugate(odom_calibration["initial_yaw_quat"]), quat).astype(np.float32)
+            quat_aligned /= max(float(np.linalg.norm(quat_aligned)), 1e-8)
+
             state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
             state_cmd.dq = d.qvel[6 : 6 + num_joints].copy()
             state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
-            state_cmd.base_pos = d.qpos[:3].copy()
-            state_cmd.base_quat = quat.copy()
+            state_cmd.base_pos = base_pos.copy()
+            state_cmd.base_quat = quat_aligned.copy()
             state_cmd.ang_vel = d.qvel[3:6].copy()
             state_cmd.lin_vel = d.qvel[0:3].copy()
         sync_object_state()
@@ -904,7 +946,42 @@ if __name__ == "__main__":
                     if sim_counter % control_decimation == 0:
                         sync_robot_state()
                         prev_policy = FSM_controller.cur_policy
+
+                        # 【核心防突变机制】在 FSM_controller.run() 真正执行策略切换（内部将自动调用 contactflow_policy.enter()）前，
+                        # 提前检测前一个策略状态是否准备切换到 omnicontact (SKILL_OmniContact)。
+                        # 若检测到准备进入 omnicontact，则在 enter() 之前先清零校准里程计并完成状态同步。
+                        # 这样当随后 FSM_controller.run() 内部执行 OmniContact.enter() 时，
+                        # 其获取到的 state_cmd.base_pos 将完全准确对准当前真实归零坐标 [0.0, 0.0, 0.77]，
+                        # 同时 enter() 内部的 obs_history_buffer.fill(0) 能够彻底抹除所有切模式前的旧里程计与动作记录，
+                        # 完美消除旧归零逻辑中调用两次 run()、在 obs_history_buffer 制造~1.89m阶跃跳变，导致神经网络产生假想超高速碰撞并疯狂抬脚猛踹倒地的问题！
+                        is_switching_to_omni = (
+                            prev_policy is not contactflow_policy
+                            and state_cmd.skill_cmd == FSMCommand.SKILL_OmniContact
+                        )
+                        if is_switching_to_omni:
+                            print("\n[Odom Calibration] 检测到准备进入 omnicontact 模式！在调用策略 enter() 前完成里程计校准锁零...")
+                            if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
+                                real_robot.subscribe_odom("/lio/odom")
+                            odom_calibration["initial_pos_xy"] = None
+                            odom_calibration["initial_pos_z"] = None
+                            odom_calibration["initial_yaw_quat"] = None
+                            vision_cache["last_pos"] = None
+                            vision_cache["last_quat"] = None
+                            sync_robot_state()
+                            forward_dist = float(args.goal_pos[0]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 2.0
+                            lateral_dist = float(args.goal_pos[1]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 0.0
+                            goal_pos[0] = forward_dist
+                            goal_pos[1] = lateral_dist
+                            if hasattr(contactflow_policy, "box_dims"):
+                                goal_pos[2] = float(contactflow_policy.box_dims[2])
+                            print(f"[Odom Calibration] 切换前已完成里程计锚点归零锁定，正前方目标点设置: [{goal_pos[0]:.3f}, {goal_pos[1]:.3f}, {goal_pos[2]:.3f}]")
+                            if hasattr(contactflow_policy, "goal_pos"):
+                                contactflow_policy.goal_pos[:] = goal_pos
+                            if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
+                                contactflow_policy.goal_pos_override[:] = goal_pos
+
                         FSM_controller.run()
+
                         if FSM_controller.cur_policy.name in [FSMStateName.LOCOMODE, FSMStateName.SKILL_OmniContact] or state_cmd.skill_cmd == FSMCommand.LOCO:
                             if not has_entered_loco:
                                 has_entered_loco = True
@@ -912,25 +989,33 @@ if __name__ == "__main__":
                                     print("\n[Odom] 机器人已切换至 LOCO 站立/工作模式，开始订阅 ROS2 /lio/odom 里程计并重置校准锚点！")
                                     real_robot.subscribe_odom("/lio/odom")
                                     odom_calibration["initial_pos_xy"] = None
+                                    odom_calibration["initial_pos_z"] = None
                                     odom_calibration["initial_yaw_quat"] = None
 
-                        if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy:
-                            print("\n[Odom Calibration] Switched to omnicontact, resetting odometry calibration and vision cache.")
+                        # 保底兜底：若前序非 checkChange 触发而是直接手动改变 cur_policy 切换至 omnicontact，则确保同样重新调用 enter() 与归零，绝不重复叠加 run()
+                        if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy and not is_switching_to_omni:
+                            print("\n[Odom Calibration] 兜底检测到已直接切换至 omnicontact，进行重置校准并执行 enter() 归零缓冲...")
                             if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
                                 real_robot.subscribe_odom("/lio/odom")
                             odom_calibration["initial_pos_xy"] = None
+                            odom_calibration["initial_pos_z"] = None
                             odom_calibration["initial_yaw_quat"] = None
                             vision_cache["last_pos"] = None
                             vision_cache["last_quat"] = None
                             sync_robot_state()
-                            if real_robot is not None:
-                                goal_pos[0] = 2.5
-                                goal_pos[1] = 0.0
-                                print(f"[Odom Calibration]实机模式切换至 omnicontact 默认生成前方 2.5m 目标点: [{goal_pos[0]:.3f}, {goal_pos[1]:.3f}, {goal_pos[2]:.3f}]")
-                                if hasattr(contactflow_policy, "goal_pos"):
-                                    contactflow_policy.goal_pos[:] = goal_pos
-                                if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
-                                    contactflow_policy.goal_pos_override[:] = goal_pos
+                            forward_dist = float(args.goal_pos[0]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 2.0
+                            lateral_dist = float(args.goal_pos[1]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 0.0
+                            goal_pos[0] = forward_dist
+                            goal_pos[1] = lateral_dist
+                            if hasattr(contactflow_policy, "box_dims"):
+                                goal_pos[2] = float(contactflow_policy.box_dims[2])
+                            if hasattr(contactflow_policy, "goal_pos"):
+                                contactflow_policy.goal_pos[:] = goal_pos
+                            if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
+                                contactflow_policy.goal_pos_override[:] = goal_pos
+                            contactflow_policy.enter()
+                            contactflow_policy.run()
+
                         maybe_closed_loop_replan()
 
                         policy_output_action = policy_output.actions.copy()
@@ -943,7 +1028,9 @@ if __name__ == "__main__":
                         r_ankle_goal = policy_output.r_ankle_goal.copy()
 
                         log_step_counter += 1
-                        if log_step_counter % 20 == 0:
+                        is_omni = (FSM_controller.cur_policy is contactflow_policy)
+                        log_freq = 20 if is_omni else 100
+                        if log_step_counter % log_freq == 0:
                             cam_pos_str = "None"
                             cam_quat_str = "None"
                             if vision_receiver is not None and vision_receiver.obj_pose_cv is not None:

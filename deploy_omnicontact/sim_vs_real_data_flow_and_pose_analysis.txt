@@ -1,0 +1,77 @@
+====================================================================================================
+      OmniContact 仿真与实机部署 (deploy_omnicontact_novision.py) 数据源、流转机制与校准全景对比文档
+====================================================================================================
+
+这份报告对 /home/feng/OmniContact_sim2sim/deploy_omnicontact/deploy_omnicontact_novision.py 在仿真环境（Simulation, 纯物理真值 / ZMQ 视觉环闭合）与真实 Unitree G1 硬件部署（Real Robot, DDS / ROS2）下的所有数据输入源、流转路径、里程计锁零校准 (`odom_calibration`) 以及运行模式切换（LocoMode <-> OmniContact）机制进行了逐层对齐与系统对比。
+
+----------------------------------------------------------------------------------------------------
+一、 物理传感器 vs 仿真传感器：底层数据源映射对照表
+----------------------------------------------------------------------------------------------------
+
+| 数据/特征维度 | 真实硬件部署模式 (`--real`) | 仿真环境部署模式 (`real_robot is None`) | 核心同构性与工程差异分析 |
+| :--- | :--- | :--- | :--- |
+| **关节位置 `q` 与速度 `dq`** | **Unitree DDS 硬件电极反馈**<br>`rt/lowstate -> msg.motor_state[:29].q / .dq` | **MuJoCo 动力学物理引擎状态**<br>`d.qpos[7:7+29]` 与 `d.qvel[6:6+29]` | 数据格式完全同构（29维 float32），均按 `mj2lab` 与 `lab2mj` 在物理序号与网络顺序间双向映射。 |
+| **机身角速度 `ang_vel`** | **物理机身背部/躯干硬件 IMU 陀螺仪**<br>`rt/lowstate -> msg.imu_state.gyroscope` | **MuJoCo 浮动基座角速度真值**<br>`d.qvel[3:6]` | 仿真无物理陀螺仪零偏与震动噪声；真机直接透传 3 维陀螺仪数据。 |
+| **机身姿态 `base_quat` 与重力方向 `gravity_ori`** | **物理机身 IMU 四元数 (`[w,x,y,z]`)**<br>`msg.imu_state.quaternion` 提取，且减去首帧偏航角 `initial_yaw_quat` | **MuJoCo 浮动基座四元数真值**<br>`d.qpos[3:7]` 提取，同样减去首帧偏航角 `initial_yaw_quat` | **严禁雷达姿态覆盖**：无论是真机还是仿真，机身姿态均由 IMU / 浮动基座决定，不使用带安装倾角的雷达姿态。 |
+| **空间位置里程计 `base_pos`** | **物理雷达 SLAM 里程计 `/lio/odom`**<br>`nav_msgs/msg/Odometry` 的 `pose.pose.position` (或 UDP 桥接 9877 / DDS `rt/odostate`) | **MuJoCo 浮动基座绝对坐标真值 (`raw_odom_pos`)**<br>`d.qpos[:3].copy()` 作为“虚拟里程计” | 均通过 `odom_calibration` 进行开机起点 XY 减法与 Z 轴向 0.77m (`m.qpos0[2]`) 的对齐映射。 |
+| **操作物体位姿 `obj_pos / obj_quat` 及相对位姿 `rel_pelvis_pos`** | **深度相机 / AprilTag ROS2 话题闭环**<br>`ROS2ArucoReceiver` 监听 `/aruco/box_pose_pelvis`（经 IMU 偏航角补偿）、`_torso_link`、`box_pose` | **区分纯真值模式与视觉闭环模式**：<br>(1) 纯真值 (`--use-vision=False`)：直接读取 `d.xpos[box_body_id]` 及 `d.xquat`，结合 `odom_calibration` 协同平移和旋转校准；<br>(2) 仿真视觉 (`--use-vision`)：MuJoCo `Renderer` 渲染图片发送至 ZMQ 端口 5555，经本地视觉解算返回至 `VisionReceiver` 端口 5556，结合 `data.site_xpos["d435_camera_frame"]` 与 EMA ($\alpha=0.2$) 滤波变换到世界空间。 | 仿真与真机最终输入给 `cf-gen` 的参数完全统一为经过对齐后的目标点与物体边界尺寸 `box_dims`。 |
+
+
+----------------------------------------------------------------------------------------------------
+二、 三个核心运行阶段的数据流转、零点校准与内外参处理：仿真 vs 真机深度对比
+----------------------------------------------------------------------------------------------------
+
+1. Stage 1: 机器人挂着的时候（启动自检与被动初始化阶段）
+   * **真机表现 (`--real`)**：
+     - 在刚运行程序时，`self.odom_enabled = False`。此时 `sync_robot_state()` 内部获取到的里程计坐标为全零 `[0.0, 0.0, 0.0]`。
+     - 为防止刚开机挂在架子上时，雷达 SLAM 节点由于高位初始化（如悬空 1.25m）或架子晃动导致坐标大幅跳变，代码触发 `if np.allclose(base_pos, 0.0): base_pos = m.qpos0[:3].copy()`。
+     - 将悬空阶段的 `base_pos` 绝对锁定为标准站立原点 `[0.0, 0.0, 0.77]`，并将悬空姿态记录为初始朝向锁 `initial_yaw_quat`，保障被动自检安全。
+   * **仿真表现 (`real_robot is None`)**：
+     - 在仿真中不存在独立的“外部 SLAM 建图节点”，刚加载 XML 时浮动基座位置 `d.qpos[:3]` 即为初始设定位置 `config["init_pos"]` 或 `[0.0, 0.0, 0.77]`。
+     - 仿真同样通过 `raw_odom_pos = d.qpos[:3].copy()` 抓取第一帧物理坐标作为待校准基础，在逻辑和数据层面与真机完全保持同构一致。
+
+2. Stage 2: 放下地并手柄切入 `LocoMode` 站立与走动调整位姿阶段
+   * **真机表现 (`--real`)**：
+     - 手柄切入 `LOCOMODE`，主循环检测到 `not has_entered_loco`，立即把 `has_entered_loco = True`，并执行 `real_robot.subscribe_odom("/lio/odom")` 激活真正的 ROS2 里程计订阅！
+     - 同时把 `odom_calibration["initial_pos_xy/z/yaw"]` 设为 `None`。下一个周期进入 `sync_robot_state()` 时，精准抓取**放下着地瞬间**雷达返回的绝对坐标 $[x_{odom}, y_{odom}, z_{odom}]$ 作为对齐原点。
+     - 转换公式：$X_{state} = x_{odom} - initial\_pos\_xy[0]$，$Y_{state} = y_{odom} - initial\_pos\_xy[1]$，$Z_{state} = (z_{odom} - initial\_pos\_z) + 0.77$。
+     - 结果：着地瞬间机器人的当前 XY 位移被强行重置为 `(0.0, 0.0)`，高度统一等效对齐到 0.77m！
+   * **仿真表现 (`real_robot is None`)**：
+     - 切入 `LOCOMODE` 时，尽管仿真无须发起网络调用订阅 ROS2 话题，但主循环**一模一样地触发了 `has_entered_loco = True` 与 `odom_calibration` 原点重置命令**！
+     - 随后进入 `sync_robot_state()`，程序把当前 MuJoCo 的 `d.qpos[:3]` 作为新原点，并执行完全一致的 XY 减法与 Z 轴映射公式！
+     - **行进中调整位姿的影响对照**：无论在真机还是仿真中操作摇杆走到纸箱前，`base_pos` 都在实时累积位移（如走到了 `[2.1, -0.3, 0.77]`）。但因为 `LocoMode.py` 的强化学习策略在推理公式 `policy(obs)` 中**从不读取 `base_pos`**，仅依靠 `q/dq`、IMU 与速度指令控制，因此走多远都不干扰自身行走平衡。
+
+3. Stage 3: 调整到位后手柄切入 `OmniContact` 全身操作阶段（防突变与坐标锁零解析）
+   * **真机表现 (`--real`)**：
+     - 当走到纸箱前按下 `L1 + A` 切换至 `omnicontact` 时，主循环判定 `is_switching_to_omni = True`。
+     - 此时立即执行**第二次强制校准重置**：清空 `odom_calibration` 和 `vision_cache`，调用 `sync_robot_state()` 把当前站在纸箱正前方这里的物理雷达坐标锁为全新的原点 `initial_pos_xy`，朝向锁为正前方 `initial_yaw_quat`！
+     - `state_cmd.base_pos` 瞬间被彻底对齐与重置为干净的原点 `[0.0, 0.0, 0.77]`、朝向 `[1, 0, 0, 0]`，任务目标点动态锚定为正前方 `[args.goal_pos[0], args.goal_pos[1], box_dims[2]]` (如 `[3.0, 0.0, 0.15]`)。
+     - 进入 `OmniContact.enter()`，并执行 `obs_history_buffer.fill(0)` **抹除过去 5 步的走动观测差**。
+     - **防阶跃物理核心**：这套强制归零彻底切断了 Loco 行走段积累的几米坐标差，防止在切模式瞬间长达 5 步的历史观测窗里出现“虚假超高速撞击位移阶跃”，避免了神经网络因误判极速撞击发出狂暴电机力矩导致猛踹或重摔。
+   * **仿真表现 (`real_robot is None`)**：
+     - **仿真环境完美、100%同构地复刻并触发了这套防突变重零机制！**
+     - 当仿真切入 `omnicontact`，程序同样判定 `is_switching_to_omni = True`（或通过主循环切入校验），强行清空 `odom_calibration["initial_pos_xy/z/yaw"]`！
+     - `sync_robot_state()` 重新抓取此时 MuJoCo 走到纸箱前这点的 `d.qpos[:3]` (`raw_odom_pos`) 作为新锚点，把仿真的 `base_pos` 同样极其干净地对齐回 `[0.0, 0.0, 0.77]`！
+     - **对于物体真值坐标 (`d.xpos/xquat`) 的平滑迁移**：如果在纯仿真真值模式下 (`use_direct_rel_poses = False`)，由于 `base_pos` 被平移和旋转了 `initial_pos_xy/z` 与 `initial_yaw_quat`，`sync_object_state()` 里同样把这一绝对平移与旋转矩阵精准作用在物体坐标 `obj_pos` 上，确保物理世界中的“人-箱相对位移”在重设原点前后保持完美恒定！
+     - 随后进入 `OmniContact.enter()` 同样执行 `obs_history_buffer.fill(0)` 历史归零。
+
+----------------------------------------------------------------------------------------------------
+三、 针对“下蹲/前倾偏移与0.77映射”的物理自参考系解耦原理：为什么仿真和真机都不会受影响？
+----------------------------------------------------------------------------------------------------
+
+无论在仿真（完美传感器真值）还是真机（雷达存在杠杆臂效应及测高误差）中，下蹲、前倾以及 0.77m 默认映射**全部不会干扰 `cf-gen` 和 `cf-tracker` 的正常运行**，其底层解耦原理在两套系统下是完全同构的：
+
+1. `cf-gen`（上层轨迹生成层）的相对锚定：
+   - 无论是通过真机 ROS2 `ROS2ArucoReceiver` 还是仿真 `VisionReceiver` / 物体真值计算，`cf-gen` (`plan_cfgen_reference`) 规划所依据的物体中心点 `obj_p`，始终由公式 `obj_p = pelvis_p + 视觉/世界相对坐标` 算出。
+   - 当 `cf-gen` (`CfGenCarryBox.generate` 等) 内部计算双手和躯干应该如何去抓取和靠近纸箱时，它计算的始终是 $obj\_p - pelvis\_p = \text{相对坐标}$。全局原点 `pelvis_p` (`base_pos`) 被彻底相减消去，不受雷达假性位移干扰。
+
+2. `cf-tracker`（底层 RL 控制策略层）的全自参考系局部转换（Self-Centric Relative Frame）：
+   - `ort_session.run` 输入的 539 维追踪特征和观测中：
+     (1) 末端位置 `ee_pos` (15维)：通过 $FK(q)_{link} - FK(q)_{torso\_link}$ 算出，相减时 `base_pos` 100% 彻底抵消，只依赖物理编码器关节角 `q`；
+     (2) 纸箱与包围盒 `obj_pos_rel / bbox_rel_flat`：全部以当前实时计算出的胸腔中心 `torso_pos` 及水平朝向 (`robot_heading`) 为原点相减计算；
+     (3) 未来 11 步轨迹目标 `tracking_obs` (539维)：在把 `cf-gen` 生成的绝对目标送入 RL 网络前，`_get_future_state()` 内部强制执行求差投影：
+         $$\text{网络实际接收目标} = pos\_ref[idx] - torso\_pos_{now}$$
+         每一个目标都被实时转为以当前胸腔中心 `torso_pos` 为局部零点的差向量！
+   - **总结**：0.77m 的虚拟映射以及全局里程计坐标，只是为了正运动学计算中间绝对位置搭建的数学脚手架；而在真正把指令和观测喂进控制神经网络驱动机器人前倾、下蹲和抱箱的瞬间，所有数据已被精密的“自参考系相减公式”洗涤成不含全局位移的纯粹局部矢量。因此无论仿真还是实机，均能平稳克服传感器偏移并稳定完成全身操作。
+
+====================================================================================================

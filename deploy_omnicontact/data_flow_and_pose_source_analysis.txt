@@ -1,0 +1,136 @@
+====================================================================================================
+           OmniContact 实机部署 (deploy_omnicontact_novision.py) 数据流、传感器输入与模式切换全景分析
+====================================================================================================
+
+这份报告对当前 /home/feng/OmniContact_sim2sim/deploy_omnicontact/deploy_omnicontact_novision.py 在真实 Unitree G1 机器人上部署时，传入参考轨迹规划层 (cf-gen) 与底层控制器层 (cf-tracker) 的所有数据源（精确到具体的物理传感器、ROS2 话题、Unitree SDK 字段与坐标参考系）以及从 LocoMode 切换至 OmniContact 模式时的数据流转变化与归零对齐防突变机制进行了全面且精确的追踪梳理。
+
+----------------------------------------------------------------------------------------------------
+一、 cf-gen (上层轨迹生成模块 / Reference Generator) 输入数据源及精确获取链路
+----------------------------------------------------------------------------------------------------
+在实机部署中，cf-gen 模块（由 policy/omnicontact/CFgen_reference.py 中的 CfGenCarryBox, CfGenPushBox 等规则/模型化参考轨迹生成器实例化）于 OmniContact.enter() 初始化与动态闭环规划期间被调用。cf-gen 接收的核心数据及其完整依赖链条如下：
+
+1. 机器人骨盆坐标系当前位置与姿态 (pelvis_pos, pelvis_quat)
+   - 获取与解算链路：通过 MujocoKinematics.forward(state_cmd.q, state_cmd.base_pos, state_cmd.base_quat) 进行正运动学 (FK) 实时解算获取 fk_info["pelvis"]["pos"] 与 fk_info["pelvis"]["quat"]。
+   - 物理底层输入源依赖：
+     (1) 机器人关节角度 state_cmd.q (29维)：来源于以太网通道 DDS 接收到的底层状态包 (rt/lowstate -> msg.motor_state[:29].q)。
+     (2) 里程计绝对位置 state_cmd.base_pos (3维 world position)：
+         * 若已订阅并激活里程计，主要来源于 ROS2 话题 `/lio/odom` (类型: nav_msgs/msg/Odometry，提取 `msg.pose.pose.position`)，或后备 UDP 监听端口 9877 (ros2_bridge.py / DDS `rt/odostate`)。
+         * 校准映射对齐：针对雷达/底盘起点不统一与漂移问题，在实机初始化时锁定第一帧位置坐标作为锚点 (`initial_pos_xy`)，并通过公式 `base_pos[2] = (raw_z - initial_pos_z) + m.qpos0[2]` 将任意开机高度精确对齐至机器物理目标站立标准高度 0.77m (`m.qpos0[2]`)。
+     (3) 机身四元数姿态 state_cmd.base_quat (4维 [w,x,y,z])：
+         * 物理传感器源：真正机器人机身硬件 IMU (DDS `rt/lowstate` -> `msg.imu_state.quaternion`)。
+         * 锁零校准对齐：开机第一帧通过 `initial_yaw_quat = yaw_quat(quat)` 锁定初始全局偏航角，并计算对齐后姿态 `quat_mul(quat_conjugate(initial_yaw_quat), quat)`，消除初始朝向偏差。
+
+2. 操作物体 / 纸箱相对与绝对位姿 (obj_pos, obj_quat / rel_pelvis_pos, rel_pelvis_quat)
+   - 物理传感器源：装载于机器人头部或外界的 D435 深度相机 / 视觉算法识别输出 (AprilTag / ArUco 标签定位)。
+   - ROS2 监听与前处理 (ROS2ArucoReceiver 类)：
+     (1) 优先通道 (骨盆坐标系位姿 /aruco/box_pose_pelvis - 类型: geometry_msgs/msg/PoseStamped)：
+         * 数据内容：视觉处理直接发布物体相对于骨盆系 `pelvis` 的相对坐标 (`p_ros`, `q_ros`)。
+         * SDK 偏航角旋转扭转补偿 (关键创新)：为解决真实运动中骨盆坐标扭转带来的偏差，自动由 `state_cmd.base_quat` 提取实时物理偏航角 `yaw_sdk`，构建旋转矩阵对视觉反馈坐标进行逆向旋转补偿：
+           `upper_pos_rel = R_comp @ p_ros`
+           `upper_quat_rel = quat_mul(q_comp, q_ros)`
+         * 最终由 `cf-gen` 使用：当 `state_cmd.use_direct_rel_poses = True` 时，cf-gen 接收此补偿后的相对骨盆坐标，或者结合 `pelvis_pos/quat` 转换为全局坐标 (`pelvis_pos + quat_apply(pelvis_quat, rel_pelvis_pos)`)。
+     (2) 次选通道 (胸腔坐标系位姿 /aruco/box_pose_torso_link)：
+         * 接收物体相对于胸腔连杆系 `torso_link` 的位姿，通过实时 FK 算出的 `torso_link` 绝对坐标对齐。
+     (3) 备选通道 (深度相机光学坐标系位姿 /aruco/box_pose)：
+         * 接收物体相对于相机坐标系 `d435_camera_frame` 的位姿，通过相机外部矩阵解算至全局。
+     (4) 丢帧遮挡安全兜底：若超时 (0.5s 无更新)，系统自动锁定并延用 `vision_cache["last_pos/last_quat"]` (及 `last_rel_pelvis_pos`) 中上一有效帧的视觉数据。
+
+3. 任务目标摆放点 (goal_pos)
+   - 来源：命令行启动参数 `--goal-pos` (如默认 `[3.0, 0.0, 0.26]`) 或从 `ROS2ArucoReceiver` 的目标位姿监听动态刷新 (`get_validated_goal_pose`)。切换到 OmniContact 时自动重新校对为正前方距离 `[args.goal_pos[0], args.goal_pos[1], box_dims[2]]`。
+
+4. 物体边界尺寸 (box_dims / push_box_dims / ball_dims)
+   - 来源：由模型 XML 定义文件 (`g1_description/omnicontact_*.xml`) 的 `geom_size` 读取自动推算获取，或通过 `--box-half-dims` 手动覆盖。
+
+
+----------------------------------------------------------------------------------------------------
+二、 cf-tracker (底层强化学习控制策略网络 / RL Tracking Policy) 输入数据源及精确获取链路
+----------------------------------------------------------------------------------------------------
+`cf-tracker` 对应 `policy/omnicontact/OmniContact.py` 中 ONNX 推理引擎 (`ort_session.run(None, obs_dict)`) 载入的底层强化学习策略。其每一帧输入特征向量 `full_obs` 由“11步未来参考轨迹追踪特征 (`tracking_obs`, 539维)”与“历史5帧观测缓冲拼接 (`obs_history_flatten`)”构成。各底层原始特征属性 `curr_obs_prop` 的物理数据获取与解算过程如下：
+
+1. 末端执行器位置相对于胸腔坐标系特征 (ee_pos - 15维 = 5个末端 × 3维)
+   - 包含对象：`left_palm_link` (左手心), `right_palm_link` (右手心), `left_ankle_pitch_link` (左脚踝), `right_ankle_pitch_link` (右脚踝), `mid360_link` (雷达中枢/头部)。
+   - 物理输入源与解算：依赖 Unitree SDK 接收的物理关节编码器位置 `state_cmd.q[:29]` 与 IMU 四元数 `state_cmd.base_quat` 运行 FK 获取绝对坐标，通过 `quat_rotate_inverse(torso_quat, fk_info[name]["pos"] - torso_pos)` 解算为相对于胸腔 `torso_link` 局部坐标系的绝对相对位置。
+
+2. 机器人机身三轴角速度 (ang_vel - 3维)
+   - 物理输入源：真实机器人物理机身硬件 IMU 的陀螺仪 (Gyroscope)。
+   - 获取路径：Unitree SDK 底层帧 `rt/lowstate` -> `msg.imu_state.gyroscope`，直接以 float32 格式传入。
+
+3. 重力方向投影坐标矢量 (gravity_ori - 3维)
+   - 物理输入源：真实机器物理 IMU 姿态四元数。
+   - 解算逻辑：通过 `get_gravity_orientation(base_quat)`，将全局坐标系下重力矢量 `[0, 0, -1]` 经过 `quat_rotate_inverse(base_quat, [0, 0, -1])` 旋转投影至机身坐标系下表达。
+
+4. 物理关节电机角度偏差 (qj - 29维) 与 关节电机速度 (dqj - 29维)
+   - 物理输入源：29个物理驱动电机的真实编码器反馈。
+   - 映射与规范化：从 Unitree SDK `msg.motor_state[:29].q / dq` 取出，根据 `self.mj2lab` 将物理电机序号重排为网络顺序，并求取相对默认姿态的偏差：
+     `qj = state_cmd.q[mj2lab] - default_angles_lab`
+     `dqj = state_cmd.dq[mj2lab]`
+
+5. 上一控制时刻网络输出动作 (last_action - 29维)
+   - 来源：`cf-tracker` 网络上一时刻推理并被限制在 `[-100, 100]` 之间的原始输出 `self.action`。
+
+6. 物体相对胸腔中心坐标与朝向6D表征 (obj_pos_rel - 3维, obj_rot_6d - 6维)
+   - 物理输入源与转换：
+     * 若存在 `state_cmd.rel_torso_pos/quat` (`/aruco/box_pose_torso_link` 提供的数据，对朝向解算了 `R_diff` 剔除了 Pitch/Roll 干扰)，则直接读取。
+     * 否则，以实时计算出的 `torso_pos` 及水平朝向四元数 `robot_heading = yaw_quat(torso_quat)`（剔除了胸口前倾和横滚）作为局部参考原点，计算 `subtract_frame_transforms(torso_pos, robot_heading, obj_pos, obj_quat)`。
+     * `_clip_norm` 将相对位移限制在 4.0m 范数内；`obj_rot_6d` 将相对转角四元数通过 `matrix_from_quat` 取前两列构建为 6D 朝向矩阵向量。
+
+7. 物体 3D 边界框角点相对特征 (bbox_rel_flat - 24维 = 8个顶点 × 3维)
+   - 物理生成逻辑：基于物体尺寸半宽 `box_dims * 2.0 * 0.5` 构建 8 个包围盒顶点，乘以 `obj_quat` 后叠加到 `obj_pos` 得到世界坐标系下角点坐标，再全部**逆向旋转投影至机器人的水平朝向坐标系 (`robot_heading`) 并以胸腔中心 `torso_pos` 为原点表达** (`quat_apply_batch(heading_conj, bbox_world - torso_pos)`)。
+
+8. 实时追踪轨迹指令输入 (tracking_obs - 539维 = 11步未来时间窗 × 49维)
+   - 来源：由 **cf-gen 生成的全局目标轨迹点序列** (`self.ref_left_wrist_pos/quat`, `ref_right_wrist_pos/quat`, `ref_torso_future_pos/quat`, `ref_left_ankle_future_pos/quat`, `ref_right_ankle_future_pos/quat`, `ref_contact`)。
+   - 实时相对化转换 (`_get_future_state`)：根据设定时间窗 `future_frames = [0, 1, 2, 3, 4, 8, 12, 16, 24, 32, 50]` 选取 11 步未来目标，所有规划点在进入 `cf-tracker` 前，必须实时执行**局部化转换**——统一投影到当前时刻机器人的**胸腔中心 `torso_pos` 及其水平朝向 `robot_heading` (`yaw_quat(torso_quat)`) 坐标系下**：
+     `rel_pos = quat_apply_batch(robot_heading_conj, pos_ref[idx] - torso_pos)`
+     `rel_quat = quat_mul_left_batch(robot_heading_conj, quat_ref[idx])` -> 转6D朝向。
+   - 每一帧特征包括：左手目标(9) + 右手目标(9) + 胸腔目标(9) + 左脚踝目标(9) + 右脚踝目标(9) + 预期足手接触标识(4) = **49维/帧**。11帧共 **539维**。
+
+
+----------------------------------------------------------------------------------------------------
+三、 LocoMode 与 OmniContact 模式数据流转机理与切换瞬间的动态变化全景
+----------------------------------------------------------------------------------------------------
+
+1. LocoMode (LOCOMODE / 摇杆运动模式) 数据流转机理
+   - 核心任务：支撑机器人在无物理搬运要求下的平稳站立、行走与转向。
+   - 极简硬件感知闭环（数据隔离特征）：
+     * **绝不使用也不订阅视觉 AprilTag (/aruco/*) 与雷达里程计 (/lio/odom)**！即使外界存在物体或者没有 SLAM 里程计，策略仅利用机器人底层自闭环传感器进行平衡。
+     * 输入状态源：Unitree SDK `rt/lowstate` 返回的电机角度 `q/dq`，IMU 陀螺仪角速度 `ang_vel`，及重力朝向投影 `gravity_ori`。
+     * 外部人为指令：遥控手柄输入 `JoyStick` 转化为三个轴向的线速度/角速度指令 `state_cmd.vel_cmd` (`[-1, 1]`缩放乘 `cmd_scale`)。
+   - 指令下发：LocoMode 神经网络 (`LocoMode.py` 中的 LibTorch/JIT policy) 输出 29 维关节目标位置，加上 `default_angles` 并按 `joint2motor_idx` 重排为硬件电机序号，结合固定刚度与阻尼通过 `rt/lowcmd` 驱动电机。
+
+2. OmniContact (SKILL_OmniContact / 全身接触操作模式) 数据流转机理
+   - 核心任务：全身手臂与腿部多自由度深度协调，精确接近、接触并把持操作纸箱或球体搬运至目标位点。
+   - 双层解耦与多源深度融合网络：
+     * 打通外界视觉闭环 (`ROS2ArucoReceiver`) 与高精度绝对定位 (`RealRobotInterface.subscribe_odom("/lio/odom")`)。
+     * `cf-gen` 作为“规划脑”，在骨盆/世界坐标系下根据视觉物体与目标位置不断生成上肢与躯干期望路径；
+     * `cf-tracker` 作为“控制脑”，把“规划脑”的绝对目标以及外界物体的相对包围盒，统统降维并投影到当前的胸心水平坐标系 (`torso_pos`, `robot_heading`)，最终驱动全身 29 个关节。
+
+3. 从 LocoMode 切换至 OmniContact 瞬间的完整数据流流转与防突变对齐机制 (切模式核心解密)
+   当操作员在手柄上按下 `L1 + A` (发送 `FSMCommand.SKILL_OmniContact`) 时，程序在主循环与 FSM 切换交界处自动执行一套极具严密性与物理安全性的**五步协同状态校准流程**：
+
+   [第一步：主动触发 ROS2 / DDS 里程计订阅对接]
+   * 系统立即调用 `real_robot.subscribe_odom("/lio/odom")`，启动或者接管底层关于物理世界绝对坐标 `ros2_base_pos` 和速度 `ros2_lin_vel` 的回调通道。
+
+   [第二步：双重锁零与参考锚点校准 (重要防跌倒机制)]
+   * 为消除在 LocoMode 自由行走或转弯过程中产生的任意位移与机身转角积累，主循环直接清空里程计校准锚点：
+     `odom_calibration["initial_pos_xy"] = None`
+     `odom_calibration["initial_pos_z"] = None`
+     `odom_calibration["initial_yaw_quat"] = None`
+     同时清空视觉缓存 `vision_cache["last_pos/last_quat"] = None`。
+   * 紧接着执行 `sync_robot_state()` 重新生成锚点：
+     - XY 平面锁零：把切换瞬间底盘/雷达所在的世界坐标 `base_pos[:2]` 记录为新的 `initial_pos_xy`，自此时起，机器人的物理起始 XY 被完美归零为 `(0.0, 0.0)`。
+     - Z 高度标准物理对齐：把这一刻的任意雷达高度 `initial_pos_z` 精确等效映射至机器物的标准物理站立高度 `m.qpos0[2] = 0.77m` (`base_pos[2] = (z - initial_pos_z) + 0.77`)。
+     - 朝向四元数锁零：把此刻的偏航朝向 `yaw_quat(quat)` 记录为 `initial_yaw_quat`，让切换后的第一帧姿态对准标准正前方 `[1, 0, 0, 0]`。
+
+   [第三步：重锚定空间操作目标点 (goal_pos alignment)]
+   * 基于刚刚完成对齐的初始正前方坐标，将终点位置自动重新设定为：正前方向前 `args.goal_pos[0]` (如 3.0m)、横向 `args.goal_pos[1]`、高度为物体中心高 `box_dims[2]`，保证目标摆放位在新的工作空间中绝对正确。
+
+   [第四步：执行策略进入 (OmniContact.enter) 与观测历史彻底抹除]
+   * `FSM_controller.run()` 调用 `OmniContact.enter()` 内部函数：
+     - 调用 `obs_history_buffer.fill(0)`：**彻底清空并重置上一状态 (LocoMode) 在内存缓存池里留下的长达 5 步的旧运动历史特征与旧动作**。
+     - 此时正向运动学解算出的机器人骨盆连杆系和物理绝对坐标，均精确收敛于对齐后的 `[0.0, 0.0, 0.77]`。
+     - 【核心物理安全闭环】：之所以切换极其丝滑不发生猛力踹地或跌倒，是因为如果直接继承前序 Loco 模式下的非零历史坐标或者调用两次 run()，会在 `obs_history_buffer` 中由于位移差骤变产生约 1~2m/s 的“虚假高速度差阶跃”，导致神经控制网络误以为自身正在发生超高速剧烈撞击或失重从而输出异常猛烈的关节力矩！通过上述切模式前精准的“坐标锁零 + 历史清空”双保险机制，从根本上确保了 cf-gen 和 cf-tracker 在拿到第一组推理数据时完全处于平稳就绪的完美原点状态。
+
+   [第五步：闭环多模态控制流正式接管]
+   * 自下一控制周期起，系统进入稳定的全接触搬运数据循环：深度视觉的 AprilTag 补偿位姿 (`rel_pelvis_pos`) -> 实时输入 `cf-gen` 规划未来全局轨迹 -> 全局轨迹转胸心系局部目标 (`tracking_obs`) + 实时相对包围盒 (`bbox_rel_flat`) + 关节传感器 -> 实时输入 `cf-tracker` RL 策略 -> 以 29 维期望 PD 指令通过 `rt/lowcmd` 闭环控制真实电机。
+
+====================================================================================================

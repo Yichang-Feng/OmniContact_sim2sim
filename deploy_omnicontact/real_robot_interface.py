@@ -216,8 +216,6 @@ class RealRobotInterfacePy:
         elif getattr(self, "ros2_base_pos", None) is not None:
             base_pos = self.ros2_base_pos.copy()
             lin_vel = self.ros2_lin_vel.copy()
-            if getattr(self, "ros2_quat", None) is not None:
-                quat = self.ros2_quat.copy()
         elif self.odo_state is not None:
             base_pos = np.array(self.odo_state.position[:3], dtype=np.float32)
             lin_vel = np.array(self.odo_state.linear_velocity[:3], dtype=np.float32)
