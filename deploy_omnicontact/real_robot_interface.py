@@ -216,13 +216,10 @@ class RealRobotInterfacePy:
         elif getattr(self, "ros2_base_pos", None) is not None:
             base_pos = self.ros2_base_pos.copy()
             lin_vel = self.ros2_lin_vel.copy()
-        elif self.odo_state is not None:
-            base_pos = np.array(self.odo_state.position[:3], dtype=np.float32)
-            lin_vel = np.array(self.odo_state.linear_velocity[:3], dtype=np.float32)
-        elif self.sport_state is not None:
-            base_pos = np.array(self.sport_state.position[:3], dtype=np.float32)
-            lin_vel = np.array(self.sport_state.velocity[:3], dtype=np.float32)
         else:
+            # 当开启里程计 (odom_enabled=True) 但 /lio/odom 尚未接收到首包时，
+            # 严格禁止降级回退使用机器人底层的自己里程计 (odo_state/sport_state)，
+            # 保持返回全0向量 [0.0, 0.0, 0.0]，防止错误触发里程计锚点提前锁定！
             base_pos = np.zeros(3, dtype=np.float32)
             lin_vel = np.zeros(3, dtype=np.float32)
 
@@ -378,8 +375,11 @@ class RealRobotInterfaceCpp:
             if getattr(self, "ros2_quat", None) is not None:
                 quat = self.ros2_quat.copy()
         else:
-            base_pos = np.ctypeslib.as_array(self.pos_buf).copy()
-            lin_vel = np.ctypeslib.as_array(self.vel_buf).copy()
+            # 当开启里程计 (odom_enabled=True) 但 /lio/odom 尚未接收到首包时，
+            # 严格禁止降级回退使用底层 C++ DDS 的 pos_buf (rt/odommodestate)，
+            # 保持返回全0向量 [0.0, 0.0, 0.0]，防止错误触发里程计锚点提前锁定！
+            base_pos = np.zeros(3, dtype=np.float32)
+            lin_vel = np.zeros(3, dtype=np.float32)
         return q, dq, quat, gyro, base_pos, lin_vel
 
     def _ros2_odom_handler(self, msg):

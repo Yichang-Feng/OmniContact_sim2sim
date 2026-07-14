@@ -522,6 +522,32 @@ if __name__ == "__main__":
         default="enx6c1ff724495a",
         help="Network interface name connected to the robot (e.g., eth0, enp3s0).",
     )
+    parser.add_argument(
+        "--test-late-dims",
+        dest="test_late_dims",
+        action="store_true",
+        default=True,
+        help="一开始不传入箱子真实尺寸（传入默认1,1,1），到箱子面前/Phase 12再传入真实尺寸进行测试。",
+    )
+    parser.add_argument(
+        "--no-test-late-dims",
+        dest="test_late_dims",
+        action="store_false",
+        help="关闭延迟传参测试，一开始即传入真实尺寸。",
+    )
+    parser.add_argument(
+        "--late-dims-replan",
+        dest="late_dims_replan",
+        action="store_true",
+        default=True,
+        help="在 Phase 12 传入真实尺寸时，同步重新生成参考轨迹 (调用 enter())。",
+    )
+    parser.add_argument(
+        "--no-late-dims-replan",
+        dest="late_dims_replan",
+        action="store_false",
+        help="在 Phase 12 传入真实尺寸时，仅更新 box_dims/bbox_scale，不重新生成参考轨迹。",
+    )
     args = parser.parse_args()
     args.task = TASK_ALIASES.get(args.task, args.task)
     xml_path = resolve_xml_path(args.task, args.xml_path, config)
@@ -534,17 +560,18 @@ if __name__ == "__main__":
         None if args.box_half_dims is None else np.asarray(args.box_half_dims, dtype=np.float32).reshape(3),
     )
     active_object_name, box_half_dims = select_active_box_dims(args.task, dims_by_profile)
+    real_box_half_dims = box_half_dims.copy()
     init_pos = parse_object_pos_arg(
         args.init_pos,
         config.get("init_pos", (1.0, 0.0, 0.55)),
-        float(box_half_dims[2]),
+        float(real_box_half_dims[2]),
         args.task,
         is_goal=False,
     )
     goal_pos = parse_object_pos_arg(
         args.goal_pos,
         config.get("goal_pos", (3.0, 0.0, 0.26)),
-        float(box_half_dims[2]),
+        float(real_box_half_dims[2]),
         args.task,
         is_goal=True,
     )
@@ -641,12 +668,17 @@ if __name__ == "__main__":
     contactflow_policy.push_box_dims = np.asarray(dims_by_profile["push_box_dims"], dtype=np.float32).copy()
     contactflow_policy.carry_box_dims = np.asarray(dims_by_profile["carry_box_dims"], dtype=np.float32).copy()
     contactflow_policy.stack_box_dims = np.asarray(dims_by_profile["stack_box_dims"], dtype=np.float32).copy()
-    contactflow_policy.box_dims = box_half_dims.copy()
+    box_dims_updated_to_real = False
+    if getattr(args, "test_late_dims", True) and active_object_name == "box":
+        contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        print(f"[deploy] 🧪 启用 Phase 12 延迟传参测试 (test_late_dims=True): 一开始不传入真实尺寸，初始 box_dims 设为默认 {contactflow_policy.box_dims.tolist()}，真实尺寸为 {real_box_half_dims.tolist()}")
+    else:
+        contactflow_policy.box_dims = real_box_half_dims.copy()
+        print(f"[deploy] active_object={active_object_name} half_dims={contactflow_policy.box_dims.tolist()}")
     contactflow_policy.goal_pos_override = goal_pos.copy()
     contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
     contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
     contactflow_policy.replan_active = False
-    print(f"[deploy] active_object={active_object_name} half_dims={box_half_dims.tolist()}")
 
     ghost_robot_joint_id = joint_id("ghost_floating_base_joint")
     ghost_robot_qpos_adr = int(m.jnt_qposadr[ghost_robot_joint_id]) if ghost_robot_joint_id >= 0 else -1
@@ -845,6 +877,12 @@ if __name__ == "__main__":
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
 
         # =========================================================================================
+        # 【Test专属实验：仿真中模拟实机视觉估算 Z 轴偏高 +10cm (0.10m)】
+        # =========================================================================================
+        if real_robot is None:
+            state_cmd.obj_pos[2] += 0.10
+
+        # =========================================================================================
         # 【Test专属改造：进入抱起来箱子站立起来之后丢失Tag模拟 & 传入 OmniContact_readme.txt 近似值】
         # =========================================================================================
         # 1. 判断是否已经“进入抱起箱子且站立起来之后” (仅通过当前策略阶段 current_phase_id >= 22 进行严格判定)
@@ -992,10 +1030,18 @@ if __name__ == "__main__":
         mujoco.mj_step(m, d)
     
     def reset_env():
+        global box_dims_updated_to_real
+        box_dims_updated_to_real = False
+        if getattr(args, "test_late_dims", True) and active_object_name == "box":
+            contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        else:
+            contactflow_policy.box_dims = real_box_half_dims.copy()
+        contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
+        contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
         reset_replan_session()
         reset_robot_pose()
         set_object_pose(init_pos)
-        table_z_offset = float(contactflow_policy.box_dims[2]) + 0.005
+        table_z_offset = float(real_box_half_dims[2]) + 0.005
         table_offset = np.array([0.0, 0.0, table_z_offset], dtype=np.float32)
         set_table_positions(init_pos - table_offset, goal_pos - table_offset)
         mujoco.mj_step(m, d)
@@ -1245,7 +1291,12 @@ if __name__ == "__main__":
                             lateral_dist = float(args.goal_pos[1]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 0.0
                             goal_pos[0] = forward_dist
                             goal_pos[1] = lateral_dist
-                            goal_pos[2] = float(contactflow_policy.box_dims[2])
+                            goal_pos[2] = float(real_box_half_dims[2])
+                            if getattr(args, "test_late_dims", True) and active_object_name == "box":
+                                box_dims_updated_to_real = False
+                                contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+                                contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
+                                contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
                             print(f"[Odom Calibration] 切换前已完成里程计锚点归零锁定，正前方目标点设置: [{goal_pos[0]:.3f}, {goal_pos[1]:.3f}, {goal_pos[2]:.3f}]")
                             if hasattr(contactflow_policy, "goal_pos"):
                                 contactflow_policy.goal_pos[:] = goal_pos
@@ -1279,7 +1330,12 @@ if __name__ == "__main__":
                             lateral_dist = float(args.goal_pos[1]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 0.0
                             goal_pos[0] = forward_dist
                             goal_pos[1] = lateral_dist
-                            goal_pos[2] = float(contactflow_policy.box_dims[2])
+                            goal_pos[2] = float(real_box_half_dims[2])
+                            if getattr(args, "test_late_dims", True) and active_object_name == "box":
+                                box_dims_updated_to_real = False
+                                contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+                                contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
+                                contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
                             if hasattr(contactflow_policy, "goal_pos"):
                                 contactflow_policy.goal_pos[:] = goal_pos
                             if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
@@ -1307,6 +1363,29 @@ if __name__ == "__main__":
                                     phase_name = phase_names.get(current_phase_id, f"Phase_{current_phase_id}")
                                     print(f"\n[omnicontact] Switch to Phase {current_phase_id}, {phase_name}")
                                     last_logged_phase_id = current_phase_id
+
+                                # =========================================================================
+                                # 【测试：到箱子面前或者说 Phase 12 的时候再传入真实的箱子尺寸】
+                                # =========================================================================
+                                if getattr(args, "test_late_dims", True) and active_object_name == "box" and not box_dims_updated_to_real:
+                                    min_palm_dist = object_palm_min_dist()
+                                    if current_phase_id >= 12 or min_palm_dist <= 0.65:
+                                        box_dims_updated_to_real = True
+                                        print(f"\n[deploy] 🚀 到达箱子面前 (Phase {current_phase_id}, palm_dist={min_palm_dist:.2f}m)！将 box_dims 从初始默认值 [1,1,1] 更新传入真实尺寸: {real_box_half_dims.tolist()}")
+                                        contactflow_policy.box_dims = real_box_half_dims.copy()
+                                        contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
+                                        contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
+                                        
+                                        if getattr(args, "late_dims_replan", True):
+                                            print("[deploy] 🔄 同步调用 enter() 重新生成依据真实尺寸的 CFgen 参考轨迹 (late_dims_replan=True)...")
+                                            sync_object_state()
+                                            contactflow_policy.enter()
+                                            sync_object_state()
+                                            curr_step = getattr(contactflow_policy, "counter_step", 0)
+                                            ref_phases = getattr(contactflow_policy, "ref_phase", [])
+                                            if len(ref_phases) > 0:
+                                                current_phase_id = int(ref_phases[min(curr_step, len(ref_phases) - 1)])
+                                                last_logged_phase_id = current_phase_id
                         else:
                             last_logged_phase_id = None
 

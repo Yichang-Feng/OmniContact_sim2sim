@@ -100,7 +100,7 @@ class ROS2ArucoReceiver:
 
     def get_validated_world_pose(self, model, data):
         with self.lock:
-            if time.time() - self.last_time > 0.2:
+            if time.time() - self.last_time > 0.5:
                 return None, None, False
             pose_torso = self.last_pose_torso
             pose_pelvis = self.last_pose_pelvis
@@ -843,46 +843,6 @@ if __name__ == "__main__":
             else:
                 state_cmd.obj_pos = d.xpos[box_body_id].copy()
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
-
-        # =========================================================================================
-        # 【Novision同步改造：进入抱起来箱子站立起来之后丢失Tag & 传入 OmniContact_readme.txt 近似经验定值】
-        # =========================================================================================
-        # 1. 判断是否已经“进入抱起箱子且站立起来之后” (仅通过当前策略阶段 current_phase_id >= 22 进行严格判定)
-        curr_step = getattr(contactflow_policy, "counter_step", 0)
-        ref_phases = getattr(contactflow_policy, "ref_phase", [])
-        current_phase_id = int(ref_phases[min(curr_step, len(ref_phases) - 1)]) if (hasattr(contactflow_policy, "ref_phase") and len(ref_phases) > 0) else 0
-
-        is_carrying_or_standing = (current_phase_id >= 22)
-
-        # 2. 仿真 (real_robot is None) 时，从机器人抱起箱子站起来后立刻主动丢弃/忽略箱子坐标
-        is_sim_forced_loss = (real_robot is None) and is_carrying_or_standing
-
-        # 3. 仅当满足 [(current_phase_id >= 22) 且 (视野丢失: not valid_rel/not valid 或是仿真强制模拟 is_sim_forced_loss)] 两个条件时，
-        #    才统一传入 ~/Desktop/OmniContact_readme.txt 中“正常抱箱子行走时的相对位置”固定经验值：
-        #    - ROS2 骨盆系相对值 (平均近似): Pos [0.234, -0.010, 0.116] | Quat [0.998, -0.020, 0.035, -0.016]
-        #    - ROS2 胸腔系相对值 (平均近似): Pos [0.225, -0.006, 0.113] | Quat [0.998, -0.025, -0.057, 0.000]
-        if is_carrying_or_standing and (is_sim_forced_loss or not valid_rel or not valid):
-            approx_rel_pelvis_pos = np.array([0.234, -0.010, 0.116], dtype=np.float32)
-            approx_rel_pelvis_quat = np.array([0.998, -0.020, 0.035, -0.016], dtype=np.float32)
-            approx_rel_torso_pos = np.array([0.225, -0.006, 0.113], dtype=np.float32)
-            approx_rel_torso_quat = np.array([0.998, -0.025, -0.057, 0.000], dtype=np.float32)
-
-            state_cmd.rel_pelvis_pos = approx_rel_pelvis_pos.copy()
-            state_cmd.rel_pelvis_quat = approx_rel_pelvis_quat.copy()
-            state_cmd.rel_torso_pos = approx_rel_torso_pos.copy()
-            state_cmd.rel_torso_quat = approx_rel_torso_quat.copy()
-            state_cmd.use_direct_rel_poses = True
-
-            # 严格依据骨盆位姿 + 近似相对位姿推算出全局绝对坐标，防止到底层仍使用陈旧/错误的绝对坐标
-            base_p = np.asarray(state_cmd.base_pos, dtype=np.float32).reshape(3)
-            base_q = np.asarray(state_cmd.base_quat, dtype=np.float32).reshape(4)
-            state_cmd.obj_pos = (base_p + quat_apply(base_q, approx_rel_pelvis_pos)).astype(np.float32)
-            state_cmd.obj_quat = quat_mul(base_q, approx_rel_pelvis_quat).astype(np.float32)
-
-            if sim_counter % 30 == 0:
-                mode_str = "[Sim 仿真模拟Tag丢失]" if is_sim_forced_loss else "[Real 实际Tag丢失兜底]"
-                print(f"\n{mode_str} (Phase {current_phase_id}) 抱箱站立后启用 OmniContact_readme.txt 近似值 -> rel_pelvis: {approx_rel_pelvis_pos.tolist()}")
-
         if should_apply_replan_object_quat_offset():
             # Re-anchor a dropped box to a yaw-only baseline while keeping later relative in-hand tilt cues.
             state_cmd.obj_quat = quat_mul(
@@ -1195,7 +1155,6 @@ if __name__ == "__main__":
     log_file_path = os.path.join(PROJECT_ROOT, "object_pose_logging.txt")
     log_step_counter = 0
     has_entered_loco = False
-    last_logged_phase_id = None
     with open(log_file_path, "w", encoding="utf-8") as f:
         f.write("# OmniContact 完整控制流与位姿调试日志 (每50帧记录一次)\n")
         f.write("# 仅在接收到 ROS2 与 Unitree SDK 信息且调整至 loco-mode 之后开启记录\n")
@@ -1288,27 +1247,6 @@ if __name__ == "__main__":
                             contactflow_policy.run()
 
                         maybe_closed_loop_replan()
-
-                        if FSM_controller.cur_policy is contactflow_policy:
-                            curr_step = getattr(contactflow_policy, "counter_step", 0)
-                            ref_phases = getattr(contactflow_policy, "ref_phase", [])
-                            if hasattr(contactflow_policy, "ref_phase") and len(ref_phases) > 0:
-                                current_phase_id = int(ref_phases[min(curr_step, len(ref_phases) - 1)])
-                                if current_phase_id != last_logged_phase_id:
-                                    phase_names = {
-                                        11: "Approach / Pre-grasp Standoff",
-                                        12: "Crouch Down & Contact",
-                                        21: "Stand While Carrying Object",
-                                        22: "Contact Turn",
-                                        23: "Contact Loco Walk to Goal",
-                                        24: "Lower Object & Final Placement",
-                                        25: "Release & Recover Standing Posture"
-                                    }
-                                    phase_name = phase_names.get(current_phase_id, f"Phase_{current_phase_id}")
-                                    print(f"\n[omnicontact] Switch to Phase {current_phase_id}, {phase_name}")
-                                    last_logged_phase_id = current_phase_id
-                        else:
-                            last_logged_phase_id = None
 
                         policy_output_action = policy_output.actions.copy()
                         kps = policy_output.kps.copy()
