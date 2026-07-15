@@ -307,6 +307,7 @@ class OmniContact(FSMState):
             self.stackbox_stage_count = 2 if self.task == "carry-carry" else 3
             self.goal_pos = self.stack_box_goal_pos[0].copy()
         self.action = np.zeros(29, dtype=np.float32)
+        # 预清理历史缓冲池，真实的物理静态初始化将在 run() 首次调用 (counter_step == 0) 时以 curr_obs_prop 整池广播填充
         self.obs_history_buffer.fill(0)
 
         fk_info = self.kinematics.forward(self.state_cmd.q, self.state_cmd.base_pos, self.state_cmd.base_quat)
@@ -492,8 +493,14 @@ class OmniContact(FSMState):
             ]
         )
         
-        self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
-        self.obs_history_buffer[-1] = curr_obs_prop
+        # 【核心防突变修复】若为进入策略后的首帧推理 (counter_step == 0)，
+        # 直接用当前帧真实反馈特征填满 entire 5-step 缓冲池，保证历史帧差 (obs[t] - obs[t-1]) 完全为 0，
+        # 彻底消除前 4 帧全 0 与当前帧对比所产生的虚假超高速冲击波 (e.g. 37.5 m/s 坠脚与 31.5 m/s 飞箱突变)！
+        if self.counter_step == 0:
+            self.obs_history_buffer[:] = curr_obs_prop
+        else:
+            self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
+            self.obs_history_buffer[-1] = curr_obs_prop
 
         obs_history_flatten = self._flatten_obs_history()
         full_obs = np.concatenate([tracking_obs, obs_history_flatten]).astype(np.float32)

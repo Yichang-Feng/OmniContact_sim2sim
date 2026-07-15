@@ -1291,8 +1291,9 @@ if __name__ == "__main__":
                         # 若检测到准备进入 omnicontact，则在 enter() 之前先清零校准里程计并完成状态同步。
                         # 这样当随后 FSM_controller.run() 内部执行 OmniContact.enter() 时，
                         # 其获取到的 state_cmd.base_pos 将完全准确对准当前真实归零坐标 [0.0, 0.0, 0.77]，
-                        # 同时 enter() 内部的 obs_history_buffer.fill(0) 能够彻底抹除所有切模式前的旧里程计与动作记录，
-                        # 完美消除旧归零逻辑中调用两次 run()、在 obs_history_buffer 制造~1.89m阶跃跳变，导致神经网络产生假想超高速碰撞并疯狂抬脚猛踹倒地的问题！
+                        # 同时在进入策略后的首帧 run() (counter_step == 0) 中，将首帧静态特征 curr_obs_prop 广播复制填满整个 5 步 obs_history_buffer，
+                        # 既抹除所有切模式前的旧里程计与动作记录，又保证时序帧差速度差完全为 0 (消除了前4帧全0导致的37.5m/s虚假速度脉冲)，
+                        # 彻底解决了实机切模式瞬间神经网络产生假想超高速碰撞、往前猛踹一脚导致失稳倒地的问题！
                         is_switching_to_omni = (
                             prev_policy is not contactflow_policy
                             and state_cmd.skill_cmd == FSMCommand.SKILL_OmniContact
