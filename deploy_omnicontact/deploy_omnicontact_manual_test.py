@@ -661,6 +661,15 @@ if __name__ == "__main__":
     state_cmd = StateAndCmd(num_joints)
     policy_output = PolicyOutput(num_joints)
     FSM_controller = FSM(state_cmd, policy_output)
+    from policy.omnicontact.OmniContact_manual_test import OmniContact as OmniContactManualPolicy
+    FSM_controller.omnicontact = OmniContactManualPolicy(state_cmd, policy_output)
+    original_get_next_policy = FSM_controller.get_next_policy
+    def get_next_policy_manual_test(policy_name):
+        if policy_name == FSMStateName.SKILL_OmniContact:
+            FSM_controller.cur_policy = FSM_controller.omnicontact
+        else:
+            original_get_next_policy(policy_name)
+    FSM_controller.get_next_policy = get_next_policy_manual_test
     contactflow_policy = FSM_controller.omnicontact
     contactflow_policy.task = args.task
     contactflow_policy.active_object_name = active_object_name
@@ -669,7 +678,7 @@ if __name__ == "__main__":
     contactflow_policy.carry_box_dims = np.asarray(dims_by_profile["carry_box_dims"], dtype=np.float32).copy()
     contactflow_policy.stack_box_dims = np.asarray(dims_by_profile["stack_box_dims"], dtype=np.float32).copy()
     box_dims_updated_to_real = False
-    if getattr(args, "test_late_dims", True) and active_object_name == "box":
+    if getattr(args, "test_late_dims", False) and active_object_name == "box":
         contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
         print(f"[deploy] 🧪 启用 Phase 12 延迟传参测试 (test_late_dims=True): 一开始不传入真实尺寸，初始 box_dims 设为默认 {contactflow_policy.box_dims.tolist()}，真实尺寸为 {real_box_half_dims.tolist()}")
     else:
@@ -894,8 +903,8 @@ if __name__ == "__main__":
 
         is_carrying_or_standing = (current_phase_id >= 22)
 
-        # 2. 仿真 (real_robot is None) 时，从机器人抱起箱子站起来后立刻主动丢弃/忽略箱子坐标
-        is_sim_forced_loss = (real_robot is None) and is_carrying_or_standing
+        # 2. 仿真 (real_robot is None) 时，根据用户要求，在该test中不模拟Tag丢失
+        is_sim_forced_loss = False
 
         # 3. 仅当满足 [(current_phase_id >= 22) 且 (视野丢失: not valid_rel/not valid 或是仿真强制模拟 is_sim_forced_loss)] 两个条件时，
         #    才统一传入 ~/Desktop/OmniContact_readme.txt 中“正常抱箱子行走时的相对位置”固定经验值：
@@ -1077,6 +1086,9 @@ if __name__ == "__main__":
                 FSMCommand.SKILL_OmniContact,
                 reset_fn_by_source.get(contactflow_policy.reference_source),
             )
+        if (joystick.is_button_released(JoystickButton.B) and joystick.is_button_pressed(JoystickButton.L1)) or joystick.is_button_released(JoystickButton.Y):
+            if FSM_controller.cur_policy is contactflow_policy and hasattr(contactflow_policy, "trigger_next_manual_stage"):
+                contactflow_policy.trigger_next_manual_stage()
 
         if FSM_controller.cur_policy.name == FSMStateName.LOCOMODE or state_cmd.skill_cmd == FSMCommand.LOCO:
             max_lin_vel = 0.5
@@ -1255,8 +1267,14 @@ if __name__ == "__main__":
         f.write("# 4. [cf-tracker 输出指令] 关节电机目标角度/actions + 增益 kps/kds + 末端目标\n")
         f.write("# ------------------------------------------------------------------\n\n")
 
+    def key_callback(keycode):
+        # 32=Space, 13/257=Enter, 78/110=N/n, 77/109=M/m
+        if keycode in (32, 13, 257, 78, 110, 77, 109):
+            if FSM_controller.cur_policy is contactflow_policy and hasattr(contactflow_policy, "trigger_next_manual_stage"):
+                contactflow_policy.trigger_next_manual_stage()
+
     try:
-        with mujoco.viewer.launch_passive(m, d) as viewer:
+        with mujoco.viewer.launch_passive(m, d, key_callback=key_callback) as viewer:
             while viewer.is_running() and Running:
                 try:
                     Running, should_reset_counter = handle_joystick()
