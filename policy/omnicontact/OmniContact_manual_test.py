@@ -309,6 +309,8 @@ class OmniContact(FSMState):
         self.action = np.zeros(29, dtype=np.float32)
         # 预清理历史缓冲池，真实的物理静态初始化将在 run() 首次调用 (counter_step == 0) 时以 curr_obs_prop 整池广播填充
         self.obs_history_buffer.fill(0)
+        # 记录切入瞬间当前的实际物理关节角，用于切入后 0.5s (25步) 的姿态与 PD 刚度余弦平滑缓动过渡（彻底消除姿态跳变）
+        self.enter_dof_pos = self.state_cmd.q.copy()
 
         fk_info = self.kinematics.forward(self.state_cmd.q, self.state_cmd.base_pos, self.state_cmd.base_quat)
 
@@ -507,8 +509,27 @@ class OmniContact(FSMState):
         obs_dict = {self.input_names[0]: full_obs[None, ...], self.input_names[1]: np.array([[0.0]], dtype=np.float32)}
         self.action = self.ort_session.run(None, obs_dict)[0].squeeze()
 
-        self.policy_output.actions = (self.action * self.action_scale_lab + self.default_angles_lab)[self.lab2mj]
-        self.policy_output.kps, self.policy_output.kds = self.kps_lab[self.lab2mj], self.kds_lab[self.lab2mj]
+        raw_actions = (self.action * self.action_scale_lab + self.default_angles_lab)[self.lab2mj]
+        target_kps = self.kps_lab[self.lab2mj]
+        target_kds = self.kds_lab[self.lab2mj]
+
+        # 【切入瞬时姿态与 PD 刚度缓动过渡 (Blend-in Transition)】
+        # 解决 loco-mode 移动/站立姿态与 omnicontact 默认姿态 (YAML default_angles) 差异大及 Kp 刚度突降致使实机跳动失稳问题。
+        # 在进入 OmniContact 的前 blend_steps (25步=0.5秒) 内，对物理发令 Target Q 与 Kp/Kd 进行 C1 余弦平滑过渡：
+        blend_steps = 25
+        if self.counter_step < blend_steps and hasattr(self, "enter_dof_pos") and self.enter_dof_pos is not None:
+            alpha = float(self.counter_step) / float(blend_steps)
+            # 余弦平滑过渡曲线 (Smoothstep/Cosine Blend)，起点和终点的角速度差为 0
+            alpha_smooth = 0.5 * (1.0 - np.cos(alpha * np.pi))
+            self.policy_output.actions = (1.0 - alpha_smooth) * self.enter_dof_pos + alpha_smooth * raw_actions
+            # 从上一状态平稳刚度 (~200.0/5.0) 平滑过渡到当前目标刚度
+            enter_kps = np.full_like(target_kps, 200.0)
+            enter_kds = np.full_like(target_kds, 5.0)
+            self.policy_output.kps = (1.0 - alpha_smooth) * enter_kps + alpha_smooth * target_kps
+            self.policy_output.kds = (1.0 - alpha_smooth) * enter_kds + alpha_smooth * target_kds
+        else:
+            self.policy_output.actions = raw_actions
+            self.policy_output.kps, self.policy_output.kds = target_kps, target_kds
         self.policy_output.wrist_goal = np.concatenate([l_p, l_q, r_p, r_q], axis=-1)
         self.policy_output.contact = curr_contact
 
