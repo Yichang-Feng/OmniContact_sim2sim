@@ -635,6 +635,7 @@ if __name__ == "__main__":
     policy_output = PolicyOutput(num_joints)
     FSM_controller = FSM(state_cmd, policy_output)
     contactflow_policy = FSM_controller.omnicontact
+    contactflow_policy.enable_transition_blend = False
     contactflow_policy.task = args.task
     contactflow_policy.active_object_name = active_object_name
     contactflow_policy.ball_dims = np.asarray(dims_by_profile["ball_dims"], dtype=np.float32).copy()

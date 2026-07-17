@@ -73,6 +73,7 @@ class OmniContact(FSMState):
             self.joint_pos_lowerlimit_lab = np.array(config["joint_pos_lowerlimit_lab"], dtype=np.float32)
             self.joint_pos_upperlimit_lab = np.array(config["joint_pos_upperlimit_lab"], dtype=np.float32)
             self.action_scale_lab = np.array(config["action_scale_lab"], dtype=np.float32)
+            self.enable_transition_blend = config.get("enable_transition_blend", True)
 
             self.ort_session = onnxruntime.InferenceSession(self.onnx_path)
             self.input_names = [inpt.name for inpt in self.ort_session.get_inputs()]
@@ -450,7 +451,7 @@ class OmniContact(FSMState):
         # 【核心防突变修复】若为进入策略后的首帧推理 (counter_step == 0)，
         # 直接用当前帧真实反馈特征填满 entire 5-step 缓冲池，保证历史帧差 (obs[t] - obs[t-1]) 完全为 0，
         # 彻底消除前 4 帧全 0 与当前帧对比所产生的虚假超高速冲击波 (e.g. 37.5 m/s 坠脚与 31.5 m/s 飞箱突变)！
-        if self.counter_step == 0:
+        if getattr(self, "enable_transition_blend", True) and self.counter_step == 0:
             self.obs_history_buffer[:] = curr_obs_prop
         else:
             self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
@@ -467,9 +468,9 @@ class OmniContact(FSMState):
 
         # 【切入瞬时姿态与 PD 刚度缓动过渡 (Blend-in Transition)】
         # 解决 loco-mode 移动/站立姿态与 omnicontact 默认姿态 (YAML default_angles) 差异大及 Kp 刚度突降致使实机跳动失稳问题。
-        # 在进入 OmniContact 的前 blend_steps (25步=0.5秒) 内，对物理发令 Target Q 与 Kp/Kd 进行 C1 余弦平滑过渡：
+        # 在进入 OmniContact 的前 blend_steps (25步=0.5秒) 内，若开启过渡开关则对 Target Q 与 Kp/Kd 进行 C1 余弦平滑过渡：
         blend_steps = 25
-        if self.counter_step < blend_steps and hasattr(self, "enter_dof_pos") and self.enter_dof_pos is not None:
+        if getattr(self, "enable_transition_blend", True) and self.counter_step < blend_steps and hasattr(self, "enter_dof_pos") and self.enter_dof_pos is not None:
             alpha = float(self.counter_step) / float(blend_steps)
             # 余弦平滑过渡曲线 (Smoothstep/Cosine Blend)，起点和终点的角速度差为 0
             alpha_smooth = 0.5 * (1.0 - np.cos(alpha * np.pi))
@@ -482,6 +483,10 @@ class OmniContact(FSMState):
         else:
             self.policy_output.actions = raw_actions
             self.policy_output.kps, self.policy_output.kds = target_kps, target_kds
+
+        # 【转化过渡过程密集打印与TXT对比记录】在切状态的前35帧实时记录关节阶跃差与刚度变化
+        if self.counter_step <= 35:
+            self._log_dense_transition_step(raw_actions, target_kps)
         self.policy_output.wrist_goal = np.concatenate([l_p, l_q, r_p, r_q], axis=-1)
         self.policy_output.contact = curr_contact
 
@@ -555,3 +560,46 @@ class OmniContact(FSMState):
             return FSMStateName.LOCOMODE
         else:
             return FSMStateName.SKILL_OmniContact
+
+    def _log_dense_transition_step(self, raw_actions, target_kps):
+        try:
+            is_blend = getattr(self, "enable_transition_blend", True)
+            log_file = os.path.join(PROJECT_ROOT, "transition_log_AFTER_with_blend.txt" if is_blend else "transition_log_BEFORE_no_blend.txt")
+            mode_str = "w" if self.counter_step == 0 else "a"
+            with open(log_file, mode_str, encoding="utf-8") as f:
+                if self.counter_step == 0:
+                    f.write("========================================================================================================================\n")
+                    f.write("OmniContact 切模式转化全过程密集调试日志 (Dense Step-by-Step Transition Log)\n")
+                    f.write(f"当前运行版本: {'【加入余弦缓动过渡后 (AFTER - 平稳无跳动)】' if is_blend else '【加入余弦缓动过渡前 (BEFORE - 原始突变跳动)】'}\n")
+                    f.write("========================================================================================================================\n")
+                    f.write("Step | 时间(s) | 缓动权重(α) | 左膝实际角 -> 发令角 (阶跃差ΔQ) | 左髋实际角 -> 发令角 (阶跃差ΔQ) | 发令 Kp | 脚踝Z轴帧差速度\n")
+                    f.write("------------------------------------------------------------------------------------------------------------------------\n")
+                
+                step_t = self.counter_step * 0.02
+                blend_steps = 25
+                if is_blend and self.counter_step < blend_steps:
+                    alpha = float(self.counter_step) / float(blend_steps)
+                    alpha_smooth = 0.5 * (1.0 - np.cos(alpha * np.pi))
+                elif is_blend:
+                    alpha_smooth = 1.0
+                else:
+                    alpha_smooth = 0.0
+
+                knee_act = float(self.state_cmd.q[3])
+                knee_cmd = float(self.policy_output.actions[3])
+                knee_err_deg = (knee_cmd - knee_act) * 180.0 / np.pi
+
+                hip_act = float(self.state_cmd.q[0])
+                hip_cmd = float(self.policy_output.actions[0])
+                hip_err_deg = (hip_cmd - hip_act) * 180.0 / np.pi
+
+                kp_val = float(self.policy_output.kps[3])
+
+                if self.counter_step == 0 and not is_blend:
+                    ee_z_vel = (float(self.obs_history_buffer[-1][2]) - 0.0) / 0.02
+                else:
+                    ee_z_vel = (float(self.obs_history_buffer[-1][2]) - float(self.obs_history_buffer[-2][2])) / 0.02
+
+                f.write(f"{self.counter_step:4d} | {step_t:6.2f}s | {alpha_smooth:11.3f} | {knee_act:6.3f} -> {knee_cmd:6.3f} (Δ={knee_err_deg:+6.2f}°) | {hip_act:6.3f} -> {hip_cmd:6.3f} (Δ={hip_err_deg:+6.2f}°) | {kp_val:7.2f} | {ee_z_vel:+8.2f} m/s\n")
+        except Exception as e:
+            pass
