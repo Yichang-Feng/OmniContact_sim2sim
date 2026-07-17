@@ -1,0 +1,723 @@
+# OmniContact 预备站立与在线规划测试调试日志 (每50帧记录一次)
+# ------------------------------------------------------------------
+
+=== Step: 56 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.387, -0.016, -0.187] | Quat: [0.977, -0.052, -0.208, 0.004] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.261, -0.027, -0.370] | Quat: [0.997, 0.000, -0.000, -0.077] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.175, -0.008, 0.734] | Quat: [0.977, 0.052, 0.208, -0.004]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.387, -0.016, -0.187] | Quat [0.977, -0.052, -0.208, 0.004]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.261, -0.027, -0.370] | Quat [0.997, 0.000, -0.000, -0.077]
+--------------------------------------------------------------------
+
+=== Step: 136 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.726, 0.064, -0.858] | Quat: [0.979, 0.012, 0.202, 0.028] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [1.028, -0.043, -0.541] | Quat: [1.000, -0.000, 0.000, -0.019] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.356, 0.002, 0.902] | Quat: [0.979, -0.012, -0.202, -0.028]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.726, 0.064, -0.858] | Quat [0.979, 0.012, 0.202, 0.028]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [1.028, -0.043, -0.541] | Quat [1.000, -0.000, 0.000, -0.019]
+--------------------------------------------------------------------
+
+=== Step: 216 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.589, 0.083, -0.876] | Quat: [0.967, 0.018, 0.252, 0.045] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.968, 0.069, -0.514] | Quat: [0.999, 0.000, -0.000, 0.044] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.294, 0.014, 0.878] | Quat: [0.967, -0.018, -0.252, -0.045]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.589, 0.083, -0.876] | Quat [0.967, 0.018, 0.252, 0.045]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.968, 0.069, -0.514] | Quat [0.999, 0.000, -0.000, 0.044]
+--------------------------------------------------------------------
+
+=== Step: 296 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.508, 0.031, -0.830] | Quat: [0.966, -0.006, 0.257, 0.037] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.878, 0.055, -0.503] | Quat: [0.999, -0.000, 0.000, 0.039] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.203, 0.013, 0.868] | Quat: [0.966, 0.006, -0.257, -0.037]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.508, 0.031, -0.830] | Quat [0.966, -0.006, 0.257, 0.037]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.878, 0.055, -0.503] | Quat [0.999, -0.000, 0.000, 0.039]
+--------------------------------------------------------------------
+
+=== Step: 376 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.412, 0.054, -0.774] | Quat: [0.967, -0.001, 0.250, 0.056] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.761, 0.059, -0.512] | Quat: [0.999, -0.000, -0.000, 0.047] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.087, 0.012, 0.877] | Quat: [0.967, 0.001, -0.250, -0.056]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.412, 0.054, -0.774] | Quat [0.967, -0.001, 0.250, 0.056]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.761, 0.059, -0.512] | Quat [0.999, -0.000, -0.000, 0.047]
+--------------------------------------------------------------------
+
+=== Step: 456 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.284, 0.072, -0.746] | Quat: [0.957, 0.016, 0.284, 0.059] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.672, 0.077, -0.506] | Quat: [0.998, 0.000, -0.000, 0.063] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.003, 0.005, 0.871] | Quat: [0.957, -0.016, -0.284, -0.059]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.284, 0.072, -0.746] | Quat [0.957, 0.016, 0.284, 0.059]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.672, 0.077, -0.506] | Quat [0.998, 0.000, -0.000, 0.063]
+--------------------------------------------------------------------
+
+=== Step: 536 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.263, 0.057, -0.709] | Quat: [0.964, 0.018, 0.261, 0.051] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.610, 0.063, -0.516] | Quat: [0.998, -0.000, -0.000, 0.061] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.064, 0.009, 0.881] | Quat: [0.964, -0.018, -0.261, -0.051]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.263, 0.057, -0.709] | Quat [0.964, 0.018, 0.261, 0.051]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.610, 0.063, -0.516] | Quat [0.998, -0.000, -0.000, 0.061]
+--------------------------------------------------------------------
+
+=== Step: 616 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.210, 0.053, -0.730] | Quat: [0.952, 0.004, 0.302, 0.047] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.617, 0.091, -0.509] | Quat: [0.998, -0.000, -0.000, 0.068] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.057, -0.009, 0.876] | Quat: [0.952, -0.004, -0.302, -0.047]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.210, 0.053, -0.730] | Quat [0.952, 0.004, 0.302, 0.047]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.617, 0.091, -0.509] | Quat [0.998, -0.000, -0.000, 0.068]
+--------------------------------------------------------------------
+
+=== Step: 696 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.234, 0.048, -0.759] | Quat: [0.951, -0.002, 0.306, 0.040] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.656, 0.099, -0.513] | Quat: [0.998, -0.000, -0.000, 0.066] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.017, -0.014, 0.880] | Quat: [0.951, 0.002, -0.306, -0.040]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.234, 0.048, -0.759] | Quat [0.951, -0.002, 0.306, 0.040]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.656, 0.099, -0.513] | Quat [0.998, -0.000, -0.000, 0.066]
+--------------------------------------------------------------------
+
+=== Step: 776 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.255, 0.052, -0.770] | Quat: [0.952, 0.000, 0.303, 0.041] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.676, 0.107, -0.515] | Quat: [0.998, -0.000, -0.000, 0.070] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.004, -0.013, 0.882] | Quat: [0.952, -0.000, -0.303, -0.041]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.255, 0.052, -0.770] | Quat [0.952, 0.000, 0.303, 0.041]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.676, 0.107, -0.515] | Quat [0.998, -0.000, -0.000, 0.070]
+--------------------------------------------------------------------
+
+=== Step: 856 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.256, 0.057, -0.770] | Quat: [0.952, 0.001, 0.302, 0.044] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.675, 0.111, -0.515] | Quat: [0.997, -0.000, -0.000, 0.073] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.004, -0.013, 0.882] | Quat: [0.952, -0.001, -0.302, -0.044]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.256, 0.057, -0.770] | Quat [0.952, 0.001, 0.302, 0.044]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.675, 0.111, -0.515] | Quat [0.997, -0.000, -0.000, 0.073]
+--------------------------------------------------------------------
+
+=== Step: 936 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.251, 0.060, -0.767] | Quat: [0.952, 0.001, 0.302, 0.047] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.670, 0.112, -0.514] | Quat: [0.997, -0.000, -0.000, 0.073] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.001, -0.015, 0.881] | Quat: [0.952, -0.001, -0.302, -0.047]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.251, 0.060, -0.767] | Quat [0.952, 0.001, 0.302, 0.047]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.670, 0.112, -0.514] | Quat [0.997, -0.000, -0.000, 0.073]
+--------------------------------------------------------------------
+
+=== Step: 1016 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.245, 0.063, -0.765] | Quat: [0.952, 0.001, 0.304, 0.048] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.666, 0.114, -0.514] | Quat: [0.997, 0.000, -0.000, 0.074] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.005, -0.016, 0.881] | Quat: [0.952, -0.001, -0.304, -0.048]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.245, 0.063, -0.765] | Quat [0.952, 0.001, 0.304, 0.048]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.666, 0.114, -0.514] | Quat [0.997, 0.000, -0.000, 0.074]
+--------------------------------------------------------------------
+
+=== Step: 1096 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.243, 0.064, -0.765] | Quat: [0.951, 0.001, 0.305, 0.049] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.666, 0.114, -0.513] | Quat: [0.997, 0.000, -0.000, 0.074] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.005, -0.017, 0.881] | Quat: [0.951, -0.001, -0.305, -0.049]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.243, 0.064, -0.765] | Quat [0.951, 0.001, 0.305, 0.049]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.666, 0.114, -0.513] | Quat [0.997, 0.000, -0.000, 0.074]
+--------------------------------------------------------------------
+
+=== Step: 1176 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.243, 0.064, -0.766] | Quat: [0.951, 0.001, 0.306, 0.049] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.667, 0.115, -0.513] | Quat: [0.997, -0.000, -0.000, 0.074] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.003, -0.017, 0.880] | Quat: [0.951, -0.001, -0.306, -0.049]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.243, 0.064, -0.766] | Quat [0.951, 0.001, 0.306, 0.049]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.667, 0.115, -0.513] | Quat [0.997, -0.000, -0.000, 0.074]
+--------------------------------------------------------------------
+
+=== Step: 1256 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.243, 0.065, -0.767] | Quat: [0.951, 0.002, 0.306, 0.049] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.669, 0.115, -0.513] | Quat: [0.997, 0.000, -0.000, 0.074] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.002, -0.017, 0.880] | Quat: [0.951, -0.002, -0.306, -0.049]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.243, 0.065, -0.767] | Quat [0.951, 0.002, 0.306, 0.049]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.669, 0.115, -0.513] | Quat [0.997, 0.000, -0.000, 0.074]
+--------------------------------------------------------------------
+
+=== Step: 1336 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.244, 0.066, -0.768] | Quat: [0.951, 0.002, 0.307, 0.050] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.670, 0.116, -0.513] | Quat: [0.997, 0.000, -0.000, 0.074] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.001, -0.017, 0.881] | Quat: [0.951, -0.002, -0.307, -0.050]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.244, 0.066, -0.768] | Quat [0.951, 0.002, 0.307, 0.050]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.670, 0.116, -0.513] | Quat [0.997, 0.000, -0.000, 0.074]
+--------------------------------------------------------------------
+
+=== Step: 1416 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.245, 0.066, -0.769] | Quat: [0.951, 0.002, 0.307, 0.050] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.671, 0.116, -0.513] | Quat: [0.997, 0.000, -0.000, 0.075] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.000, -0.017, 0.881] | Quat: [0.951, -0.002, -0.307, -0.050]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.245, 0.066, -0.769] | Quat [0.951, 0.002, 0.307, 0.050]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.671, 0.116, -0.513] | Quat [0.997, 0.000, -0.000, 0.075]
+--------------------------------------------------------------------
+
+=== Step: 1496 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.246, 0.067, -0.769] | Quat: [0.951, 0.002, 0.306, 0.050] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.672, 0.117, -0.513] | Quat: [0.997, 0.000, -0.000, 0.075] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.001, -0.017, 0.881] | Quat: [0.951, -0.002, -0.306, -0.050]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.246, 0.067, -0.769] | Quat [0.951, 0.002, 0.306, 0.050]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.672, 0.117, -0.513] | Quat [0.997, 0.000, -0.000, 0.075]
+--------------------------------------------------------------------
+
+=== Step: 1576 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.932, 0.043, -0.645] | Quat: [0.997, 0.002, 0.073, 0.021] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [1.026, 0.055, -0.546] | Quat: [1.000, 0.000, -0.000, 0.027] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.365, 0.000, 0.904] | Quat: [0.997, -0.002, -0.073, -0.021]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.932, 0.043, -0.645] | Quat [0.997, 0.002, 0.073, 0.021]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [1.026, 0.055, -0.546] | Quat [1.000, 0.000, -0.000, 0.027]
+--------------------------------------------------------------------
+
+=== Step: 1656 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.570, 0.143, -0.827] | Quat: [0.969, 0.019, 0.237, 0.062] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.915, 0.120, -0.509] | Quat: [0.999, -0.000, -0.000, 0.054] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.247, -0.023, 0.872] | Quat: [0.969, -0.019, -0.237, -0.062]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.570, 0.143, -0.827] | Quat [0.969, 0.019, 0.237, 0.062]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.915, 0.120, -0.509] | Quat [0.999, -0.000, -0.000, 0.054]
+--------------------------------------------------------------------
+
+=== Step: 1736 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.474, 0.134, -0.792] | Quat: [0.967, 0.017, 0.246, 0.060] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.820, 0.134, -0.505] | Quat: [0.998, -0.000, -0.000, 0.063] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.154, -0.032, 0.869] | Quat: [0.967, -0.017, -0.246, -0.060]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.474, 0.134, -0.792] | Quat [0.967, 0.017, 0.246, 0.060]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.820, 0.134, -0.505] | Quat [0.998, -0.000, -0.000, 0.063]
+--------------------------------------------------------------------
+
+=== Step: 1816 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.360, 0.103, -0.767] | Quat: [0.962, 0.005, 0.265, 0.057] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.727, 0.119, -0.508] | Quat: [0.998, 0.000, -0.000, 0.060] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.059, -0.033, 0.873] | Quat: [0.962, -0.005, -0.265, -0.057]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.360, 0.103, -0.767] | Quat [0.962, 0.005, 0.265, 0.057]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.727, 0.119, -0.508] | Quat [0.998, 0.000, -0.000, 0.060]
+--------------------------------------------------------------------
+
+=== Step: 1896 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.280, 0.101, -0.736] | Quat: [0.959, 0.012, 0.278, 0.057] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.656, 0.112, -0.506] | Quat: [0.998, -0.000, -0.000, 0.063] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.013, -0.031, 0.872] | Quat: [0.959, -0.012, -0.278, -0.057]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.280, 0.101, -0.736] | Quat [0.959, 0.012, 0.278, 0.057]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.656, 0.112, -0.506] | Quat [0.998, -0.000, -0.000, 0.063]
+--------------------------------------------------------------------
+
+=== Step: 1976 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.239, 0.027, -0.710] | Quat: [0.961, 0.002, 0.276, 0.021] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.606, 0.037, -0.509] | Quat: [1.000, 0.000, -0.000, 0.025] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.071, -0.007, 0.875] | Quat: [0.961, -0.002, -0.276, -0.021]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.239, 0.027, -0.710] | Quat [0.961, 0.002, 0.276, 0.021]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.606, 0.037, -0.509] | Quat [1.000, 0.000, -0.000, 0.025]
+--------------------------------------------------------------------
+
+=== Step: 2056 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.226, 0.030, -0.725] | Quat: [0.956, 0.003, 0.293, 0.025] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.618, 0.068, -0.508] | Quat: [0.999, -0.000, -0.000, 0.052] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.058, -0.004, 0.875] | Quat: [0.956, -0.003, -0.293, -0.025]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.226, 0.030, -0.725] | Quat [0.956, 0.003, 0.293, 0.025]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.618, 0.068, -0.508] | Quat [0.999, -0.000, -0.000, 0.052]
+--------------------------------------------------------------------
+
+=== Step: 2136 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.256, 0.027, -0.762] | Quat: [0.954, -0.002, 0.299, 0.018] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.669, 0.079, -0.514] | Quat: [0.999, -0.000, -0.000, 0.049] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.006, -0.013, 0.881] | Quat: [0.954, 0.002, -0.299, -0.018]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.256, 0.027, -0.762] | Quat [0.954, -0.002, 0.299, 0.018]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.669, 0.079, -0.514] | Quat [0.999, -0.000, -0.000, 0.049]
+--------------------------------------------------------------------
+
+=== Step: 2216 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.281, 0.026, -0.771] | Quat: [0.956, -0.003, 0.292, 0.015] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.687, 0.084, -0.517] | Quat: [0.999, -0.000, -0.000, 0.050] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.012, -0.015, 0.883] | Quat: [0.956, 0.003, -0.292, -0.015]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.281, 0.026, -0.771] | Quat [0.956, -0.003, 0.292, 0.015]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.687, 0.084, -0.517] | Quat [0.999, -0.000, -0.000, 0.050]
+--------------------------------------------------------------------
+
+=== Step: 2296 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.275, 0.030, -0.764] | Quat: [0.957, -0.001, 0.290, 0.018] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.676, 0.085, -0.516] | Quat: [0.999, 0.000, -0.000, 0.053] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [-0.002, -0.014, 0.883] | Quat: [0.957, 0.001, -0.290, -0.018]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.275, 0.030, -0.764] | Quat [0.957, -0.001, 0.290, 0.018]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.676, 0.085, -0.516] | Quat [0.999, 0.000, -0.000, 0.053]
+--------------------------------------------------------------------
+
+=== Step: 2376 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.259, 0.034, -0.756] | Quat: [0.956, -0.001, 0.293, 0.023] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.662, 0.085, -0.515] | Quat: [0.999, 0.000, -0.000, 0.054] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.012, -0.014, 0.881] | Quat: [0.956, 0.001, -0.293, -0.023]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.259, 0.034, -0.756] | Quat [0.956, -0.001, 0.293, 0.023]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.662, 0.085, -0.515] | Quat [0.999, 0.000, -0.000, 0.054]
+--------------------------------------------------------------------
+
+=== Step: 2456 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.254, 0.036, -0.755] | Quat: [0.955, -0.001, 0.295, 0.024] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.659, 0.086, -0.514] | Quat: [0.999, -0.000, -0.000, 0.054] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.015, -0.016, 0.880] | Quat: [0.955, 0.001, -0.295, -0.024]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.254, 0.036, -0.755] | Quat [0.955, -0.001, 0.295, 0.024]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.659, 0.086, -0.514] | Quat [0.999, -0.000, -0.000, 0.054]
+--------------------------------------------------------------------
+
+=== Step: 2536 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.253, 0.037, -0.757] | Quat: [0.955, -0.001, 0.297, 0.024] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.661, 0.087, -0.514] | Quat: [0.999, 0.000, -0.000, 0.054] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.013, -0.016, 0.880] | Quat: [0.955, 0.001, -0.297, -0.024]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.253, 0.037, -0.757] | Quat [0.955, -0.001, 0.297, 0.024]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.661, 0.087, -0.514] | Quat [0.999, 0.000, -0.000, 0.054]
+--------------------------------------------------------------------
+
+=== Step: 2616 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.231, 0.036, -0.764] | Quat: [0.950, -0.003, 0.313, 0.022] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.665, 0.085, -0.510] | Quat: [0.999, -0.000, -0.000, 0.050] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.010, -0.019, 0.878] | Quat: [0.950, 0.003, -0.313, -0.022]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.231, 0.036, -0.764] | Quat [0.950, -0.003, 0.313, 0.022]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.665, 0.085, -0.510] | Quat [0.999, -0.000, -0.000, 0.050]
+--------------------------------------------------------------------
+
+=== Step: 2696 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.261, 0.047, -0.746] | Quat: [0.958, -0.002, 0.286, 0.030] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.650, 0.093, -0.514] | Quat: [0.998, -0.000, -0.000, 0.055] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.023, -0.021, 0.880] | Quat: [0.958, 0.002, -0.286, -0.030]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.261, 0.047, -0.746] | Quat [0.958, -0.002, 0.286, 0.030]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.650, 0.093, -0.514] | Quat [0.998, -0.000, -0.000, 0.055]
+--------------------------------------------------------------------
+
+=== Step: 2776 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.259, 0.049, -0.732] | Quat: [0.960, -0.000, 0.279, 0.032] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.633, 0.089, -0.514] | Quat: [0.998, 0.000, -0.000, 0.055] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.039, -0.020, 0.879] | Quat: [0.960, 0.000, -0.279, -0.032]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.259, 0.049, -0.732] | Quat [0.960, -0.000, 0.279, 0.032]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.633, 0.089, -0.514] | Quat [0.998, 0.000, -0.000, 0.055]
+--------------------------------------------------------------------
+
+=== Step: 2856 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.259, 0.049, -0.734] | Quat: [0.959, 0.000, 0.280, 0.032] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.637, 0.089, -0.514] | Quat: [0.998, -0.000, -0.000, 0.055] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.036, -0.019, 0.880] | Quat: [0.959, -0.000, -0.280, -0.032]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.259, 0.049, -0.734] | Quat [0.959, 0.000, 0.280, 0.032]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.637, 0.089, -0.514] | Quat [0.998, -0.000, -0.000, 0.055]
+--------------------------------------------------------------------
+
+=== Step: 2936 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.259, 0.049, -0.736] | Quat: [0.959, 0.001, 0.281, 0.032] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.639, 0.089, -0.514] | Quat: [0.998, -0.000, -0.000, 0.056] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.034, -0.019, 0.880] | Quat: [0.959, -0.001, -0.281, -0.032]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.259, 0.049, -0.736] | Quat [0.959, 0.001, 0.281, 0.032]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.639, 0.089, -0.514] | Quat [0.998, -0.000, -0.000, 0.056]
+--------------------------------------------------------------------
+
+=== Step: 3016 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.259, 0.050, -0.736] | Quat: [0.959, 0.001, 0.281, 0.033] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.639, 0.090, -0.514] | Quat: [0.998, -0.000, -0.000, 0.056] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.034, -0.019, 0.880] | Quat: [0.959, -0.001, -0.281, -0.033]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.259, 0.050, -0.736] | Quat [0.959, 0.001, 0.281, 0.033]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.639, 0.090, -0.514] | Quat [0.998, -0.000, -0.000, 0.056]
+--------------------------------------------------------------------
+
+=== Step: 3096 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.476, 0.072, -0.629] | Quat: [0.991, 0.007, 0.122, 0.046] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.627, 0.090, -0.536] | Quat: [0.998, -0.000, -0.000, 0.062] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.033, -0.014, 0.895] | Quat: [0.991, -0.007, -0.122, -0.046]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.476, 0.072, -0.629] | Quat [0.991, 0.007, 0.122, 0.046]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.627, 0.090, -0.536] | Quat [0.998, -0.000, -0.000, 0.062]
+--------------------------------------------------------------------
+
+=== Step: 3176 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.705, -0.008, -0.265] | Quat: [0.989, 0.035, -0.142, -0.028] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.593, 0.021, -0.495] | Quat: [1.000, 0.000, -0.000, 0.017] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.049, -0.004, 0.852] | Quat: [0.989, -0.035, 0.142, 0.028]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.705, -0.008, -0.265] | Quat [0.989, 0.035, -0.142, -0.028]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.593, 0.021, -0.495] | Quat [1.000, 0.000, -0.000, 0.017]
+--------------------------------------------------------------------
+
+=== Step: 3256 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.644, 0.015, 0.072] | Quat: [0.942, 0.032, -0.335, 0.001] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.513, 0.086, -0.388] | Quat: [0.997, 0.000, -0.000, 0.081] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.107, -0.004, 0.752] | Quat: [0.942, -0.032, 0.335, -0.001]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.644, 0.015, 0.072] | Quat [0.942, 0.032, -0.335, 0.001]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.513, 0.086, -0.388] | Quat [0.997, 0.000, -0.000, 0.081]
+--------------------------------------------------------------------
+
+=== Step: 3336 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.451, 0.022, 0.082] | Quat: [0.953, 0.023, -0.300, 0.017] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.382, 0.037, -0.249] | Quat: [0.998, -0.008, 0.023, 0.050] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.173, 0.015, 0.712] | Quat: [0.945, -0.021, 0.323, -0.044]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.451, 0.022, 0.082] | Quat [0.953, 0.023, -0.300, 0.017]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.382, 0.037, -0.249] | Quat [0.998, -0.008, 0.023, 0.050]
+--------------------------------------------------------------------
+
+=== Step: 3416 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.286, 0.016, 0.096] | Quat: [0.989, 0.023, -0.143, 0.018] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.294, 0.022, 0.010] | Quat: [0.997, 0.006, -0.073, 0.027] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.242, 0.008, 0.886] | Quat: [0.996, -0.015, 0.070, -0.045]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.286, 0.016, 0.096] | Quat [0.989, 0.023, -0.143, 0.018]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.294, 0.022, 0.010] | Quat [0.997, 0.006, -0.073, 0.027]
+--------------------------------------------------------------------
+
+=== Step: 3496 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.261, -0.000, 0.083] | Quat: [0.999, 0.032, -0.042, -0.001] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.258, 0.013, 0.071] | Quat: [0.994, 0.009, -0.103, 0.024] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.258, -0.010, 0.877] | Quat: [0.997, -0.027, -0.061, -0.026]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.261, -0.000, 0.083] | Quat [0.999, 0.032, -0.042, -0.001]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.258, 0.013, 0.071] | Quat [0.994, 0.009, -0.103, 0.024]
+--------------------------------------------------------------------
+
+=== Step: 3576 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.255, -0.002, 0.079] | Quat: [1.000, 0.022, -0.022, -0.003] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.250, 0.009, 0.077] | Quat: [0.995, 0.007, -0.103, 0.018] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.253, -0.007, 0.872] | Quat: [0.996, -0.019, -0.080, -0.032]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.255, -0.002, 0.079] | Quat [1.000, 0.022, -0.022, -0.003]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.250, 0.009, 0.077] | Quat [0.995, 0.007, -0.103, 0.018]
+--------------------------------------------------------------------
+
+=== Step: 3656 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.255, -0.002, 0.079] | Quat: [1.000, 0.020, -0.021, -0.005] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.249, 0.007, 0.077] | Quat: [0.995, 0.009, -0.103, 0.014] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.251, -0.005, 0.872] | Quat: [0.996, -0.016, -0.081, -0.035]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.255, -0.002, 0.079] | Quat [1.000, 0.020, -0.021, -0.005]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.249, 0.007, 0.077] | Quat [0.995, 0.009, -0.103, 0.014]
+--------------------------------------------------------------------
+
+=== Step: 3736 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.254, -0.003, 0.078] | Quat: [1.000, 0.020, -0.021, -0.008] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.249, 0.006, 0.076] | Quat: [0.994, 0.010, -0.104, 0.010] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.254, -0.006, 0.871] | Quat: [0.996, -0.015, -0.083, -0.036]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.254, -0.003, 0.078] | Quat [1.000, 0.020, -0.021, -0.008]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.249, 0.006, 0.076] | Quat [0.994, 0.010, -0.104, 0.010]
+--------------------------------------------------------------------
+
+=== Step: 3816 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.253, -0.004, 0.077] | Quat: [1.000, 0.021, -0.022, -0.009] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.247, 0.005, 0.077] | Quat: [0.994, 0.011, -0.108, 0.008] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.256, -0.007, 0.870] | Quat: [0.996, -0.016, -0.085, -0.037]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.253, -0.004, 0.077] | Quat [1.000, 0.021, -0.022, -0.009]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.247, 0.005, 0.077] | Quat [0.994, 0.011, -0.108, 0.008]
+--------------------------------------------------------------------
+
+=== Step: 3896 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.253, -0.004, 0.074] | Quat: [0.999, 0.027, -0.023, -0.005] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.248, 0.003, 0.074] | Quat: [0.994, 0.007, -0.110, 0.007] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.260, -0.009, 0.872] | Quat: [0.995, -0.026, -0.086, -0.039]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.253, -0.004, 0.074] | Quat [0.999, 0.027, -0.023, -0.005]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.248, 0.003, 0.074] | Quat [0.994, 0.007, -0.110, 0.007]
+--------------------------------------------------------------------
+
+=== Step: 3976 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.249, -0.005, 0.061] | Quat: [0.999, 0.047, 0.020, -0.002] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.242, 0.006, 0.075] | Quat: [0.995, -0.003, -0.097, 0.015] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.364, -0.020, 0.871] | Quat: [0.992, -0.054, -0.115, -0.023]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.249, -0.005, 0.061] | Quat [0.999, 0.047, 0.020, -0.002]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.242, 0.006, 0.075] | Quat [0.995, -0.003, -0.097, 0.015]
+--------------------------------------------------------------------
+
+=== Step: 4056 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.262, -0.032, 0.078] | Quat: [0.998, -0.007, -0.031, -0.059] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.263, 0.001, 0.062] | Quat: [0.996, 0.007, -0.085, 0.006] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.605, -0.005, 0.853] | Quat: [0.997, 0.007, -0.054, 0.047]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.262, -0.032, 0.078] | Quat [0.998, -0.007, -0.031, -0.059]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.263, 0.001, 0.062] | Quat [0.996, 0.007, -0.085, 0.006]
+--------------------------------------------------------------------
+
+=== Step: 4136 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.248, -0.018, 0.064] | Quat: [0.998, 0.031, -0.015, -0.045] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.244, -0.001, 0.068] | Quat: [0.994, 0.017, -0.110, -0.011] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.771, -0.011, 0.863] | Quat: [0.995, -0.023, -0.095, -0.024]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.248, -0.018, 0.064] | Quat [0.998, 0.031, -0.015, -0.045]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.244, -0.001, 0.068] | Quat [0.994, 0.017, -0.110, -0.011]
+--------------------------------------------------------------------
+
+=== Step: 4216 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.273, -0.005, 0.031] | Quat: [0.997, 0.045, -0.020, -0.064] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.275, 0.020, 0.024] | Quat: [0.995, 0.057, -0.084, -0.014] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.835, -0.017, 0.859] | Quat: [0.997, 0.001, -0.067, -0.038]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.273, -0.005, 0.031] | Quat [0.997, 0.045, -0.020, -0.064]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.275, 0.020, 0.024] | Quat [0.995, 0.057, -0.084, -0.014]
+--------------------------------------------------------------------
+
+=== Step: 4296 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.325, 0.028, 0.029] | Quat: [0.996, 0.058, -0.055, -0.028] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.326, 0.045, 0.022] | Quat: [0.991, 0.076, -0.107, 0.001] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.778, -0.045, 0.808] | Quat: [0.993, 0.008, -0.056, -0.100]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.325, 0.028, 0.029] | Quat [0.996, 0.058, -0.055, -0.028]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.326, 0.045, 0.022] | Quat [0.991, 0.076, -0.107, 0.001]
+--------------------------------------------------------------------
+
+=== Step: 4376 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.390, 0.045, -0.016] | Quat: [0.985, 0.085, -0.149, -0.025] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.399, 0.038, 0.007] | Quat: [0.967, 0.107, -0.229, -0.031] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.662, -0.140, 0.710] | Quat: [0.986, 0.010, -0.084, -0.146]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.390, 0.045, -0.016] | Quat [0.985, 0.085, -0.149, -0.025]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.399, 0.038, 0.007] | Quat [0.967, 0.107, -0.229, -0.031]
+--------------------------------------------------------------------
+
+=== Step: 4456 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.418, 0.043, -0.019] | Quat: [0.979, 0.084, -0.186, -0.011] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.422, 0.037, -0.067] | Quat: [0.981, 0.062, -0.183, -0.011] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.596, -0.223, 0.688] | Quat: [0.997, -0.021, 0.005, -0.080]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.418, 0.043, -0.019] | Quat [0.979, 0.084, -0.186, -0.011]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.422, 0.037, -0.067] | Quat [0.981, 0.062, -0.183, -0.011]
+--------------------------------------------------------------------
+
+=== Step: 4536 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.455, 0.084, -0.014] | Quat: [0.978, 0.100, -0.178, 0.050] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.450, 0.013, -0.135] | Quat: [0.994, 0.040, -0.104, -0.015] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.664, -0.168, 0.645] | Quat: [0.992, -0.051, 0.079, -0.090]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.455, 0.084, -0.014] | Quat [0.978, 0.100, -0.178, 0.050]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.450, 0.013, -0.135] | Quat [0.994, 0.040, -0.104, -0.015]
+--------------------------------------------------------------------
+
+=== Step: 4616 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.497, 0.087, 0.002] | Quat: [0.988, 0.052, -0.135, 0.060] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.443, -0.020, -0.253] | Quat: [0.996, 0.003, 0.077, -0.041] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.727, -0.136, 0.628] | Quat: [0.975, -0.061, 0.210, -0.041]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.497, 0.087, 0.002] | Quat [0.988, 0.052, -0.135, 0.060]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.443, -0.020, -0.253] | Quat [0.996, 0.003, 0.077, -0.041]
+--------------------------------------------------------------------
+
+=== Step: 4696 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.510, 0.024, -0.178] | Quat: [0.989, 0.037, -0.141, -0.007] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.427, -0.028, -0.362] | Quat: [0.999, 0.000, 0.005, -0.043] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.721, -0.131, 0.721] | Quat: [0.988, -0.040, 0.145, 0.025]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.510, 0.024, -0.178] | Quat [0.989, 0.037, -0.141, -0.007]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.427, -0.028, -0.362] | Quat [0.999, 0.000, 0.005, -0.043]
+--------------------------------------------------------------------
+
+=== Step: 4776 | FSM Policy: omnicontact_stand_prepare_test ===
+[1. ROS2视觉&底层传感]
+  - ROS2 Camera Frame (/aruco/box_pose): None
+  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): Pos: [0.424, 0.026, -0.439] | Quat: [1.000, 0.012, 0.022, -0.012] (计算GT)
+  - ROS2 Torso Frame (/aruco/box_pose_torso_link): Pos: [0.449, 0.011, -0.464] | Quat: [1.000, 0.000, 0.000, -0.016] (计算GT)
+  - Robot Base (LIO/Odom Aligned): Pos: [0.714, -0.145, 0.821] | Quat: [0.999, -0.011, -0.023, 0.030]
+[2. 给 cf-gen (生成层) 输入]
+  - Upper Body Relative Pos/Quat: Pos [0.424, 0.026, -0.439] | Quat [1.000, 0.012, 0.022, -0.012]
+[3. 给 cf-tracker (跟踪层) 输入]
+  - Lower Body Relative Pos/Quat: Pos [0.449, 0.011, -0.464] | Quat [1.000, 0.000, 0.000, -0.016]
+--------------------------------------------------------------------
+
