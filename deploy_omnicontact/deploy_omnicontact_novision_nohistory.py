@@ -1,3 +1,8 @@
+"""
+无视觉、无历史观测部署脚本 (No-Vision, No-History Deployment Script)
+基于无视觉版本 (novision)，此版本在观测中不使用历史数据 (history)，
+通常用于测试不需要历史信息的特定策略模型。
+"""
 import argparse
 import sys
 from pathlib import Path
@@ -522,32 +527,6 @@ if __name__ == "__main__":
         default="enx6c1ff724495a",
         help="Network interface name connected to the robot (e.g., eth0, enp3s0).",
     )
-    parser.add_argument(
-        "--test-late-dims",
-        dest="test_late_dims",
-        action="store_true",
-        default=False,
-        help="一开始不传入箱子真实尺寸（传入默认1,1,1），到箱子面前/Phase 12再传入真实尺寸进行测试 (默认关闭)。",
-    )
-    parser.add_argument(
-        "--no-test-late-dims",
-        dest="test_late_dims",
-        action="store_false",
-        help="关闭延迟传参测试，一开始即传入真实尺寸。",
-    )
-    parser.add_argument(
-        "--late-dims-replan",
-        dest="late_dims_replan",
-        action="store_true",
-        default=True,
-        help="在 Phase 12 传入真实尺寸时，同步重新生成参考轨迹 (调用 enter())。",
-    )
-    parser.add_argument(
-        "--no-late-dims-replan",
-        dest="late_dims_replan",
-        action="store_false",
-        help="在 Phase 12 传入真实尺寸时，仅更新 box_dims/bbox_scale，不重新生成参考轨迹。",
-    )
     args = parser.parse_args()
     args.task = TASK_ALIASES.get(args.task, args.task)
     xml_path = resolve_xml_path(args.task, args.xml_path, config)
@@ -560,18 +539,17 @@ if __name__ == "__main__":
         None if args.box_half_dims is None else np.asarray(args.box_half_dims, dtype=np.float32).reshape(3),
     )
     active_object_name, box_half_dims = select_active_box_dims(args.task, dims_by_profile)
-    real_box_half_dims = box_half_dims.copy()
     init_pos = parse_object_pos_arg(
         args.init_pos,
         config.get("init_pos", (1.0, 0.0, 0.55)),
-        float(real_box_half_dims[2]),
+        float(box_half_dims[2]),
         args.task,
         is_goal=False,
     )
     goal_pos = parse_object_pos_arg(
         args.goal_pos,
         config.get("goal_pos", (3.0, 0.0, 0.26)),
-        float(real_box_half_dims[2]),
+        float(box_half_dims[2]),
         args.task,
         is_goal=True,
     )
@@ -662,23 +640,19 @@ if __name__ == "__main__":
     policy_output = PolicyOutput(num_joints)
     FSM_controller = FSM(state_cmd, policy_output)
     contactflow_policy = FSM_controller.omnicontact
+    contactflow_policy.enable_history_broadcast = False
     contactflow_policy.task = args.task
     contactflow_policy.active_object_name = active_object_name
     contactflow_policy.ball_dims = np.asarray(dims_by_profile["ball_dims"], dtype=np.float32).copy()
     contactflow_policy.push_box_dims = np.asarray(dims_by_profile["push_box_dims"], dtype=np.float32).copy()
     contactflow_policy.carry_box_dims = np.asarray(dims_by_profile["carry_box_dims"], dtype=np.float32).copy()
     contactflow_policy.stack_box_dims = np.asarray(dims_by_profile["stack_box_dims"], dtype=np.float32).copy()
-    box_dims_updated_to_real = False
-    if getattr(args, "test_late_dims", True) and active_object_name == "box":
-        contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-        print(f"[deploy] 🧪 启用 Phase 12 延迟传参测试 (test_late_dims=True): 一开始不传入真实尺寸，初始 box_dims 设为默认 {contactflow_policy.box_dims.tolist()}，真实尺寸为 {real_box_half_dims.tolist()}")
-    else:
-        contactflow_policy.box_dims = real_box_half_dims.copy()
-        print(f"[deploy] active_object={active_object_name} half_dims={contactflow_policy.box_dims.tolist()}")
+    contactflow_policy.box_dims = box_half_dims.copy()
     contactflow_policy.goal_pos_override = goal_pos.copy()
     contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
     contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
     contactflow_policy.replan_active = False
+    print(f"[deploy] active_object={active_object_name} half_dims={box_half_dims.tolist()}")
 
     ghost_robot_joint_id = joint_id("ghost_floating_base_joint")
     ghost_robot_qpos_adr = int(m.jnt_qposadr[ghost_robot_joint_id]) if ghost_robot_joint_id >= 0 else -1
@@ -806,8 +780,6 @@ if __name__ == "__main__":
     def sync_object_state():
         if box_body_id < 0:
             return
-        valid = False
-        valid_rel = False
         use_vis = getattr(args, "use_vision", False)
         if use_vis and vision_receiver is not None:
             v_pos, v_quat, valid = vision_receiver.get_validated_world_pose(m, d)
@@ -877,52 +849,6 @@ if __name__ == "__main__":
             else:
                 state_cmd.obj_pos = d.xpos[box_body_id].copy()
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
-
-        # =========================================================================================
-        # 【Test专属实验：仿真中模拟实机视觉估算 Z 轴偏高 +10cm (0.10m)】
-        # =========================================================================================
-        if real_robot is None:
-            state_cmd.obj_pos[2] += 0.10
-
-        # =========================================================================================
-        # 【Test专属改造：进入抱起来箱子站立起来之后丢失Tag模拟 & 传入 OmniContact_readme.txt 近似值】
-        # =========================================================================================
-        # 1. 判断是否已经“进入抱起箱子且站立起来之后” (仅通过当前策略阶段 current_phase_id >= 22 进行严格判定)
-        curr_step = getattr(contactflow_policy, "counter_step", 0)
-        ref_phases = getattr(contactflow_policy, "ref_phase", [])
-        current_phase_id = int(ref_phases[min(curr_step, len(ref_phases) - 1)]) if (hasattr(contactflow_policy, "ref_phase") and len(ref_phases) > 0) else 0
-
-        is_carrying_or_standing = (current_phase_id >= 22)
-
-        # 2. 仿真 (real_robot is None) 时，从机器人抱起箱子站起来后立刻主动丢弃/忽略箱子坐标
-        is_sim_forced_loss = (real_robot is None) and is_carrying_or_standing
-
-        # 3. 仅当满足 [(current_phase_id >= 22) 且 (视野丢失: not valid_rel/not valid 或是仿真强制模拟 is_sim_forced_loss)] 两个条件时，
-        #    才统一传入 ~/Desktop/OmniContact_readme.txt 中“正常抱箱子行走时的相对位置”固定经验值：
-        #    - ROS2 骨盆系相对值 (平均近似): Pos [0.234, -0.010, 0.116] | Quat [0.998, -0.020, 0.035, -0.016]
-        #    - ROS2 胸腔系相对值 (平均近似): Pos [0.225, -0.006, 0.113] | Quat [0.998, -0.025, -0.057, 0.000]
-        if is_carrying_or_standing and (is_sim_forced_loss or ((use_vis or real_robot is not None) and (not valid_rel or not valid))):
-            approx_rel_pelvis_pos = np.array([0.234, -0.010, 0.116], dtype=np.float32)
-            approx_rel_pelvis_quat = np.array([0.998, -0.020, 0.035, -0.016], dtype=np.float32)
-            approx_rel_torso_pos = np.array([0.225, -0.006, 0.113], dtype=np.float32)
-            approx_rel_torso_quat = np.array([0.998, -0.025, -0.057, 0.000], dtype=np.float32)
-
-            state_cmd.rel_pelvis_pos = approx_rel_pelvis_pos.copy()
-            state_cmd.rel_pelvis_quat = approx_rel_pelvis_quat.copy()
-            state_cmd.rel_torso_pos = approx_rel_torso_pos.copy()
-            state_cmd.rel_torso_quat = approx_rel_torso_quat.copy()
-            state_cmd.use_direct_rel_poses = True
-
-            # 严格依据骨盆位姿 + 近似相对位姿推算出全局绝对坐标，防止到底层仍使用陈旧/错误的绝对坐标
-            base_p = np.asarray(state_cmd.base_pos, dtype=np.float32).reshape(3)
-            base_q = np.asarray(state_cmd.base_quat, dtype=np.float32).reshape(4)
-            state_cmd.obj_pos = (base_p + quat_apply(base_q, approx_rel_pelvis_pos)).astype(np.float32)
-            state_cmd.obj_quat = quat_mul(base_q, approx_rel_pelvis_quat).astype(np.float32)
-
-            if sim_counter % 30 == 0:
-                mode_str = "[Sim 仿真模拟Tag丢失]" if is_sim_forced_loss else "[Real 实际Tag丢失兜底]"
-                print(f"\n{mode_str} (Phase {current_phase_id}) 抱箱站立后启用 OmniContact_readme.txt 近似值 -> rel_pelvis: {approx_rel_pelvis_pos.tolist()}")
-
         if should_apply_replan_object_quat_offset():
             # Re-anchor a dropped box to a yaw-only baseline while keeping later relative in-hand tilt cues.
             state_cmd.obj_quat = quat_mul(
@@ -1032,18 +958,10 @@ if __name__ == "__main__":
         mujoco.mj_step(m, d)
     
     def reset_env():
-        global box_dims_updated_to_real
-        box_dims_updated_to_real = False
-        if getattr(args, "test_late_dims", False) and active_object_name == "box":
-            contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-        else:
-            contactflow_policy.box_dims = real_box_half_dims.copy()
-        contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
-        contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
         reset_replan_session()
         reset_robot_pose()
         set_object_pose(init_pos)
-        table_z_offset = float(real_box_half_dims[2]) + 0.005
+        table_z_offset = float(contactflow_policy.box_dims[2]) + 0.005
         table_offset = np.array([0.0, 0.0, table_z_offset], dtype=np.float32)
         set_table_positions(init_pos - table_offset, goal_pos - table_offset)
         mujoco.mj_step(m, d)
@@ -1243,7 +1161,6 @@ if __name__ == "__main__":
     log_file_path = os.path.join(PROJECT_ROOT, "object_pose_logging.txt")
     log_step_counter = 0
     has_entered_loco = False
-    last_logged_phase_id = None
     with open(log_file_path, "w", encoding="utf-8") as f:
         f.write("# OmniContact 完整控制流与位姿调试日志 (每50帧记录一次)\n")
         f.write("# 仅在接收到 ROS2 与 Unitree SDK 信息且调整至 loco-mode 之后开启记录\n")
@@ -1255,8 +1172,21 @@ if __name__ == "__main__":
         f.write("# 4. [cf-tracker 输出指令] 关节电机目标角度/actions + 增益 kps/kds + 末端目标\n")
         f.write("# ------------------------------------------------------------------\n\n")
 
+    class DummyViewer:
+        def __init__(self):
+            self._running = True
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def is_running(self):
+            return self._running
+        def sync(self):
+            pass
+
+    viewer_ctx = DummyViewer() if getattr(args, "headless", False) else mujoco.viewer.launch_passive(m, d)
     try:
-        with mujoco.viewer.launch_passive(m, d) as viewer:
+        with viewer_ctx as viewer:
             while viewer.is_running() and Running:
                 try:
                     Running, should_reset_counter = handle_joystick()
@@ -1294,12 +1224,7 @@ if __name__ == "__main__":
                             lateral_dist = float(args.goal_pos[1]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 0.0
                             goal_pos[0] = forward_dist
                             goal_pos[1] = lateral_dist
-                            goal_pos[2] = float(real_box_half_dims[2])
-                            if getattr(args, "test_late_dims", False) and active_object_name == "box":
-                                box_dims_updated_to_real = False
-                                contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-                                contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
-                                contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
+                            goal_pos[2] = float(contactflow_policy.box_dims[2])
                             print(f"[Odom Calibration] 切换前已完成里程计锚点归零锁定，正前方目标点设置: [{goal_pos[0]:.3f}, {goal_pos[1]:.3f}, {goal_pos[2]:.3f}]")
                             if hasattr(contactflow_policy, "goal_pos"):
                                 contactflow_policy.goal_pos[:] = goal_pos
@@ -1333,12 +1258,7 @@ if __name__ == "__main__":
                             lateral_dist = float(args.goal_pos[1]) if hasattr(args, "goal_pos") and args.goal_pos is not None else 0.0
                             goal_pos[0] = forward_dist
                             goal_pos[1] = lateral_dist
-                            goal_pos[2] = float(real_box_half_dims[2])
-                            if getattr(args, "test_late_dims", False) and active_object_name == "box":
-                                box_dims_updated_to_real = False
-                                contactflow_policy.box_dims = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-                                contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
-                                contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
+                            goal_pos[2] = float(contactflow_policy.box_dims[2])
                             if hasattr(contactflow_policy, "goal_pos"):
                                 contactflow_policy.goal_pos[:] = goal_pos
                             if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
@@ -1347,50 +1267,6 @@ if __name__ == "__main__":
                             contactflow_policy.run()
 
                         maybe_closed_loop_replan()
-
-                        if FSM_controller.cur_policy is contactflow_policy:
-                            curr_step = getattr(contactflow_policy, "counter_step", 0)
-                            ref_phases = getattr(contactflow_policy, "ref_phase", [])
-                            if hasattr(contactflow_policy, "ref_phase") and len(ref_phases) > 0:
-                                current_phase_id = int(ref_phases[min(curr_step, len(ref_phases) - 1)])
-                                if current_phase_id != last_logged_phase_id:
-                                    phase_names = {
-                                        11: "Approach / Pre-grasp Standoff",
-                                        12: "Crouch Down & Contact",
-                                        21: "Stand While Carrying Object",
-                                        22: "Contact Turn",
-                                        23: "Contact Loco Walk to Goal",
-                                        24: "Lower Object & Final Placement",
-                                        25: "Release & Recover Standing Posture"
-                                    }
-                                    phase_name = phase_names.get(current_phase_id, f"Phase_{current_phase_id}")
-                                    print(f"\n[omnicontact] Switch to Phase {current_phase_id}, {phase_name}")
-                                    last_logged_phase_id = current_phase_id
-
-                                # =========================================================================
-                                # 【测试：到箱子面前或者说 Phase 12 的时候再传入真实的箱子尺寸】
-                                # =========================================================================
-                                if getattr(args, "test_late_dims", False) and active_object_name == "box" and not box_dims_updated_to_real:
-                                    min_palm_dist = object_palm_min_dist()
-                                    if current_phase_id >= 12 or min_palm_dist <= 0.65:
-                                        box_dims_updated_to_real = True
-                                        print(f"\n[deploy] 🚀 到达箱子面前 (Phase {current_phase_id}, palm_dist={min_palm_dist:.2f}m)！将 box_dims 从初始默认值 [1,1,1] 更新传入真实尺寸: {real_box_half_dims.tolist()}")
-                                        contactflow_policy.box_dims = real_box_half_dims.copy()
-                                        contactflow_policy.bbox_scale = contactflow_policy.box_dims * 2.0
-                                        contactflow_policy.bbox_offsets_scaled = contactflow_policy.bbox_offsets * contactflow_policy.bbox_scale.reshape(1, 3)
-                                        
-                                        if getattr(args, "late_dims_replan", True):
-                                            print("[deploy] 🔄 同步调用 enter() 重新生成依据真实尺寸的 CFgen 参考轨迹 (late_dims_replan=True)...")
-                                            sync_object_state()
-                                            contactflow_policy.enter()
-                                            sync_object_state()
-                                            curr_step = getattr(contactflow_policy, "counter_step", 0)
-                                            ref_phases = getattr(contactflow_policy, "ref_phase", [])
-                                            if len(ref_phases) > 0:
-                                                current_phase_id = int(ref_phases[min(curr_step, len(ref_phases) - 1)])
-                                                last_logged_phase_id = current_phase_id
-                        else:
-                            last_logged_phase_id = None
 
                         policy_output_action = policy_output.actions.copy()
                         kps = policy_output.kps.copy()

@@ -1,3 +1,8 @@
+"""
+手动测试部署脚本 (Manual Test Deployment Script)
+用于进行手动干预和测试，允许开发者通过代码或外部输入手动控制状态或动作，
+主要用于调试。
+"""
 import argparse
 import sys
 from pathlib import Path

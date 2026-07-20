@@ -1,3 +1,8 @@
+"""
+无视觉节点部署脚本 (No-Vision Deployment Script)
+此版本不使用独立的视觉节点 (VisionReceiver)，而是直接通过 ROS2 话题接收 ArUco 识别结果，
+适用于不需要复杂视觉处理，直接依赖标志物位姿的场景。
+"""
 import argparse
 import sys
 from pathlib import Path

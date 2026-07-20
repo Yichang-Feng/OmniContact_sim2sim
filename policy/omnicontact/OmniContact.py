@@ -451,7 +451,7 @@ class OmniContact(FSMState):
         # 【核心防突变修复】若为进入策略后的首帧推理 (counter_step == 0)，
         # 直接用当前帧真实反馈特征填满 entire 5-step 缓冲池，保证历史帧差 (obs[t] - obs[t-1]) 完全为 0，
         # 彻底消除前 4 帧全 0 与当前帧对比所产生的虚假超高速冲击波 (e.g. 37.5 m/s 坠脚与 31.5 m/s 飞箱突变)！
-        if getattr(self, "enable_transition_blend", True) and self.counter_step == 0:
+        if getattr(self, "enable_history_broadcast", getattr(self, "enable_transition_blend", True)) and self.counter_step == 0:
             self.obs_history_buffer[:] = curr_obs_prop
         else:
             self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
@@ -564,13 +564,28 @@ class OmniContact(FSMState):
     def _log_dense_transition_step(self, raw_actions, target_kps):
         try:
             is_blend = getattr(self, "enable_transition_blend", True)
-            log_file = os.path.join(PROJECT_ROOT, "transition_log_AFTER_with_blend.txt" if is_blend else "transition_log_BEFORE_no_blend.txt")
+            is_hist_broadcast = getattr(self, "enable_history_broadcast", is_blend)
+            
+            if is_blend and is_hist_broadcast:
+                log_name = "transition_log_AFTER_with_blend.txt"
+                mode_name = "【加入余弦缓动过渡与历史首帧广播后 (AFTER - 平稳无跳动)】"
+            elif is_blend and not is_hist_broadcast:
+                log_name = "transition_log_AFTER_no_history.txt"
+                mode_name = "【仅有余弦过渡，但无历史广播(前4帧传0) (NO_HISTORY)】"
+            elif not is_blend and is_hist_broadcast:
+                log_name = "transition_log_BEFORE_no_blend_with_history.txt"
+                mode_name = "【无余弦过渡(依然突变跳动)，仅加入了历史广播】"
+            else:
+                log_name = "transition_log_BEFORE_no_blend.txt"
+                mode_name = "【加入余弦缓动与历史广播前 (BEFORE - 原始突变跳动且前4帧传0)】"
+                
+            log_file = os.path.join(PROJECT_ROOT, log_name)
             mode_str = "w" if self.counter_step == 0 else "a"
             with open(log_file, mode_str, encoding="utf-8") as f:
                 if self.counter_step == 0:
                     f.write("========================================================================================================================\n")
                     f.write("OmniContact 切模式转化全过程密集调试日志 (Dense Step-by-Step Transition Log)\n")
-                    f.write(f"当前运行版本: {'【加入余弦缓动过渡后 (AFTER - 平稳无跳动)】' if is_blend else '【加入余弦缓动过渡前 (BEFORE - 原始突变跳动)】'}\n")
+                    f.write(f"当前运行版本: {mode_name}\n")
                     f.write("========================================================================================================================\n")
                     f.write("Step | 时间(s) | 缓动权重(α) | 左膝实际角 -> 发令角 (阶跃差ΔQ) | 左髋实际角 -> 发令角 (阶跃差ΔQ) | 发令 Kp | 脚踝Z轴帧差速度\n")
                     f.write("------------------------------------------------------------------------------------------------------------------------\n")
@@ -595,7 +610,7 @@ class OmniContact(FSMState):
 
                 kp_val = float(self.policy_output.kps[3])
 
-                if self.counter_step == 0 and not is_blend:
+                if self.counter_step == 0 and not is_hist_broadcast:
                     ee_z_vel = (float(self.obs_history_buffer[-1][2]) - 0.0) / 0.02
                 else:
                     ee_z_vel = (float(self.obs_history_buffer[-1][2]) - float(self.obs_history_buffer[-2][2])) / 0.02

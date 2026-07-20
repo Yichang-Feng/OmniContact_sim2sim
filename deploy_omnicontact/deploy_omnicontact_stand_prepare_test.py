@@ -1,3 +1,8 @@
+"""
+站立准备测试脚本 (Stand Prepare Test Script)
+专门用于测试机器人从初始状态到站立准备 (Stand Prepare) 阶段的过程，
+用于调试机器人的初始姿态和控制逻辑。
+"""
 import argparse
 import sys
 from pathlib import Path

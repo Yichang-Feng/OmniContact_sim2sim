@@ -1,3 +1,7 @@
+"""
+标准部署脚本 (Standard Deployment Script)
+此版本为包含视觉模块 (Vision) 的完整部署版本，通过 ZMQ/UDP 与独立视觉节点通信获取位姿。
+"""
 import argparse
 import sys
 from pathlib import Path
