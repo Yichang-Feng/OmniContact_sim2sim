@@ -545,9 +545,15 @@ class OmniContactStandPrepareTest(FSMState):
         
         if getattr(self, "enable_transition_blend", True) and (self.counter_step == 0 and getattr(self, "manual_stage", 0) <= 1):
             if self.stage0_counter == 0 and getattr(self, "manual_stage", 0) == 0:
-                self.obs_history_buffer[:] = curr_obs_prop
+                zero_obs_prop = curr_obs_prop.copy()
+                zero_obs_prop[3:6] = 0.0
+                zero_obs_prop[38:67] = 0.0
+                self.obs_history_buffer[:] = zero_obs_prop
             elif self.counter_step == 0 and getattr(self, "manual_stage", 0) == 1:
-                self.obs_history_buffer[:] = curr_obs_prop
+                zero_obs_prop = curr_obs_prop.copy()
+                zero_obs_prop[3:6] = 0.0
+                zero_obs_prop[38:67] = 0.0
+                self.obs_history_buffer[:] = zero_obs_prop
             else:
                 self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
                 self.obs_history_buffer[-1] = curr_obs_prop

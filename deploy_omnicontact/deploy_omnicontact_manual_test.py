@@ -1,6 +1,6 @@
 """
 手动测试部署脚本 (Manual Test Deployment Script)
-用于进行手动干预和测试，允许开发者通过代码或外部输入手动控制状态或动作，
+用于进行手动干预和测试，允许开发者通过代码或外部输入手动控制状态或动作。包括 “延迟传入箱子尺寸”测试，模拟真实视觉误差：强制 Z 轴偏高测试， 模拟抱起后 Tag 丢失
 主要用于调试。
 """
 import argparse
@@ -820,6 +820,7 @@ if __name__ == "__main__":
     def sync_object_state():
         if box_body_id < 0:
             return
+        needs_odom_calibration = False
         valid = False
         valid_rel = False
         use_vis = getattr(args, "use_vision", False)
@@ -858,6 +859,7 @@ if __name__ == "__main__":
                 else:
                     state_cmd.obj_pos = gt_pos
                     state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                    needs_odom_calibration = True
                     if sim_counter % 40 == 0:
                         print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
 
@@ -891,6 +893,7 @@ if __name__ == "__main__":
             else:
                 state_cmd.obj_pos = d.xpos[box_body_id].copy()
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                needs_odom_calibration = True
 
         # =========================================================================================
         # 【Test专属实验：仿真中模拟实机视觉估算 Z 轴偏高 +10cm (0.10m)】
@@ -946,7 +949,7 @@ if __name__ == "__main__":
             state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
 
         # 确保物体坐标与已校准的里程计局部坐标完全统一
-        if not getattr(state_cmd, "use_direct_rel_poses", False):
+        if needs_odom_calibration:
             if odom_calibration["initial_pos_xy"] is not None:
                 state_cmd.obj_pos[0] -= odom_calibration["initial_pos_xy"][0]
                 state_cmd.obj_pos[1] -= odom_calibration["initial_pos_xy"][1]

@@ -779,6 +779,7 @@ if __name__ == "__main__":
     def sync_object_state():
         if box_body_id < 0:
             return
+        needs_odom_calibration = False
         use_vis = getattr(args, "use_vision", False)
         if use_vis and vision_receiver is not None:
             v_pos, v_quat, valid = vision_receiver.get_validated_world_pose(m, d)
@@ -815,6 +816,7 @@ if __name__ == "__main__":
                 else:
                     state_cmd.obj_pos = gt_pos
                     state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                    needs_odom_calibration = True
                     if sim_counter % 40 == 0:
                         print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
 
@@ -848,6 +850,7 @@ if __name__ == "__main__":
             else:
                 state_cmd.obj_pos = d.xpos[box_body_id].copy()
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                needs_odom_calibration = True
         if should_apply_replan_object_quat_offset():
             # Re-anchor a dropped box to a yaw-only baseline while keeping later relative in-hand tilt cues.
             state_cmd.obj_quat = quat_mul(
@@ -857,7 +860,7 @@ if __name__ == "__main__":
             state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
 
         # 确保物体坐标与已校准的里程计局部坐标完全统一
-        if not getattr(state_cmd, "use_direct_rel_poses", False):
+        if needs_odom_calibration:
             if odom_calibration["initial_pos_xy"] is not None:
                 state_cmd.obj_pos[0] -= odom_calibration["initial_pos_xy"][0]
                 state_cmd.obj_pos[1] -= odom_calibration["initial_pos_xy"][1]

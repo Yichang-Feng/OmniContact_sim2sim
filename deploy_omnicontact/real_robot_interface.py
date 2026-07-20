@@ -346,6 +346,7 @@ class RealRobotInterfaceCpp:
         self.mode_machine_buf = ctypes.c_uint32()
         self.odom_enabled = False
         self.ros2_base_pos = None
+        self.ros2_base_pos_filtered = None
         self.ros2_lin_vel = None
         self.ros2_quat = None
 
@@ -366,20 +367,27 @@ class RealRobotInterfaceCpp:
         dq = np.ctypeslib.as_array(self.dq_buf).copy()
         quat = np.ctypeslib.as_array(self.quat_buf).copy()
         gyro = np.ctypeslib.as_array(self.gyro_buf).copy()
+        
+        # 使用底层 C++ 驱动提供的状态估计线速度（融合了运动学与 IMU，低延迟且平滑）
+        # 而不是使用高延迟、且在 body 坐标系下的 ROS2 /lio/odom 线速度
+        base_vel_est = np.ctypeslib.as_array(self.vel_buf).copy()
+        
         if not getattr(self, "odom_enabled", False):
             base_pos = np.zeros(3, dtype=np.float32)
-            lin_vel = np.zeros(3, dtype=np.float32)
+            lin_vel = base_vel_est
         elif getattr(self, "ros2_base_pos", None) is not None:
             base_pos = self.ros2_base_pos.copy()
-            lin_vel = self.ros2_lin_vel.copy()
-            if getattr(self, "ros2_quat", None) is not None:
-                quat = self.ros2_quat.copy()
+            lin_vel = base_vel_est
+            
+            # 重要修复：绝不能用 ROS2 的低频延迟里程计四元数覆盖底层 IMU 的高频四元数！
+            # 否则会导致 LocoMode 控制策略计算出错误的俯仰/横滚角反馈，引起机器人前后左右剧烈摇晃甚至无法站稳
+            # 这里删除原有的 if getattr(self, "ros2_quat", None) is not None: quat = self.ros2_quat.copy()
         else:
             # 当开启里程计 (odom_enabled=True) 但 /lio/odom 尚未接收到首包时，
             # 严格禁止降级回退使用底层 C++ DDS 的 pos_buf (rt/odommodestate)，
             # 保持返回全0向量 [0.0, 0.0, 0.0]，防止错误触发里程计锚点提前锁定！
             base_pos = np.zeros(3, dtype=np.float32)
-            lin_vel = np.zeros(3, dtype=np.float32)
+            lin_vel = base_vel_est
         return q, dq, quat, gyro, base_pos, lin_vel
 
     def _ros2_odom_handler(self, msg):

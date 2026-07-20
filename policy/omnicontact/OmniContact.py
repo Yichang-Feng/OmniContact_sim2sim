@@ -452,7 +452,10 @@ class OmniContact(FSMState):
         # 直接用当前帧真实反馈特征填满 entire 5-step 缓冲池，保证历史帧差 (obs[t] - obs[t-1]) 完全为 0，
         # 彻底消除前 4 帧全 0 与当前帧对比所产生的虚假超高速冲击波 (e.g. 37.5 m/s 坠脚与 31.5 m/s 飞箱突变)！
         if getattr(self, "enable_history_broadcast", getattr(self, "enable_transition_blend", True)) and self.counter_step == 0:
-            self.obs_history_buffer[:] = curr_obs_prop
+            zero_obs_prop = curr_obs_prop.copy()
+            zero_obs_prop[3:6] = 0.0
+            zero_obs_prop[38:67] = 0.0
+            self.obs_history_buffer[:] = zero_obs_prop
         else:
             self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
             self.obs_history_buffer[-1] = curr_obs_prop

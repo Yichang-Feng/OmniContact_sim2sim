@@ -826,8 +826,10 @@ if __name__ == "__main__":
     def sync_object_state():
         if box_body_id < 0:
             return
+        needs_odom_calibration = False
         valid = False
         valid_rel = False
+        needs_odom_calibration = False
         use_vis = getattr(args, "use_vision", False)
         if use_vis and vision_receiver is not None:
             v_pos, v_quat, valid = vision_receiver.get_validated_world_pose(m, d)
@@ -864,6 +866,8 @@ if __name__ == "__main__":
                 else:
                     state_cmd.obj_pos = gt_pos
                     state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                    needs_odom_calibration = True
+                    needs_odom_calibration = True
                     if sim_counter % 40 == 0:
                         print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
 
@@ -897,9 +901,12 @@ if __name__ == "__main__":
             else:
                 state_cmd.obj_pos = d.xpos[box_body_id].copy()
                 state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                needs_odom_calibration = True
+                needs_odom_calibration = True
 
-        if real_robot is None:
-            state_cmd.obj_pos[2] += 0.10
+        # 模拟z方向视觉偏差
+        # if real_robot is None:
+        #     state_cmd.obj_pos[2] += 0.10
 
         curr_step = getattr(contactflow_policy, "counter_step", 0)
         ref_phases = getattr(contactflow_policy, "ref_phase", [])
@@ -924,6 +931,7 @@ if __name__ == "__main__":
             base_q = np.asarray(state_cmd.base_quat, dtype=np.float32).reshape(4)
             state_cmd.obj_pos = (base_p + quat_apply(base_q, approx_rel_pelvis_pos)).astype(np.float32)
             state_cmd.obj_quat = quat_mul(base_q, approx_rel_pelvis_quat).astype(np.float32)
+            needs_odom_calibration = False
 
             if sim_counter % 30 == 0:
                 mode_str = "[Sim 仿真模拟Tag丢失]" if is_sim_forced_loss else "[Real 实际Tag丢失兜底]"
@@ -936,7 +944,7 @@ if __name__ == "__main__":
             ).astype(np.float32)
             state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
 
-        if not getattr(state_cmd, "use_direct_rel_poses", False):
+        if needs_odom_calibration:
             if odom_calibration["initial_pos_xy"] is not None:
                 state_cmd.obj_pos[0] -= odom_calibration["initial_pos_xy"][0]
                 state_cmd.obj_pos[1] -= odom_calibration["initial_pos_xy"][1]
@@ -1129,6 +1137,7 @@ if __name__ == "__main__":
                     if odom_calibration["initial_pos_xy"] is None or odom_calibration.get("initial_pos_z") is None:
                         odom_calibration["initial_pos_xy"] = base_pos[:2].copy()
                         odom_calibration["initial_pos_z"] = float(base_pos[2])
+                        odom_calibration["_just_reset_smooth"] = True
                         print(f"\n[Odom Calibration] 🛰️ 锁定初始位移锚点 XY: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}], Z: {odom_calibration['initial_pos_z']:.3f}m")
                     base_pos[0] -= odom_calibration["initial_pos_xy"][0]
                     base_pos[1] -= odom_calibration["initial_pos_xy"][1]
@@ -1140,6 +1149,23 @@ if __name__ == "__main__":
                     print(f"[Odom Calibration] 🧭 锁定开机第一帧朝向四元数: [{odom_calibration['initial_yaw_quat'][0]:.3f}, {odom_calibration['initial_yaw_quat'][1]:.3f}, {odom_calibration['initial_yaw_quat'][2]:.3f}, {odom_calibration['initial_yaw_quat'][3]:.3f}]")
                 quat_aligned = quat_mul(quat_conjugate(odom_calibration["initial_yaw_quat"]), quat).astype(np.float32)
                 quat_aligned /= max(float(np.linalg.norm(quat_aligned)), 1e-8)
+                
+                # ---- 最终修复：策略用 EMA 平滑坐标，视觉用 Raw 无延迟坐标 ----
+                # 记录原始无延迟的、带有高频抖动 1-3cm 的 SLAM 坐标
+                base_pos_raw = base_pos.copy()
+                
+                # 如果是重置了里程计（例如刚进入 LocoMode），或者初次初始化，强行重置平滑值
+                if not hasattr(state_cmd, "smooth_base_pos") or odom_calibration.get("_just_reset_smooth"):
+                    state_cmd.smooth_base_pos = base_pos.copy()
+                    odom_calibration["_just_reset_smooth"] = False
+                else:
+                    # 2. 缓慢收敛到带噪但无漂移的 SLAM base_pos (低通作用)
+                    alpha = 0.05
+                    state_cmd.smooth_base_pos = (1.0 - alpha) * state_cmd.smooth_base_pos + alpha * base_pos
+                
+                # 覆盖 base_pos 为零延迟平滑后的坐标，完美解决视觉错位与策略震荡！
+                base_pos = state_cmd.smooth_base_pos.copy()
+                # --------------------------------------------------------
 
                 state_cmd.q = q.copy()
                 state_cmd.dq = dq.copy()
@@ -1254,6 +1280,12 @@ if __name__ == "__main__":
         f.write("# ------------------------------------------------------------------\n\n")
 
     def key_callback(keycode):
+        global is_hanging
+        # 键盘 Z 键：切换吊起/放下状态 (104 for lowercase 'h', 72 for 'H')
+        if keycode in (122, 90):
+            is_hanging = not is_hanging
+            status = "吊起悬空" if is_hanging else "放下到地面"
+            print(f"[key_callback] ⌨️ 键盘按下 Z，当前仿真机器人状态切换为: {status}")
         # 键盘 1 / S 键：切入 DefaultPose (POS_RESET)
         if keycode in (49, 115, 83):
             request_skill(FSMCommand.POS_RESET)
@@ -1278,6 +1310,7 @@ if __name__ == "__main__":
                 sync_object_state()
                 contactflow_policy.trigger_next_manual_stage()
 
+    is_hanging = False
     try:
         with mujoco.viewer.launch_passive(m, d, key_callback=key_callback) as viewer:
             while viewer.is_running() and Running:
@@ -1326,12 +1359,16 @@ if __name__ == "__main__":
                         if FSM_controller.cur_policy.name in [FSMStateName.LOCOMODE, FSMStateName.SKILL_OmniContact] or state_cmd.skill_cmd == FSMCommand.LOCO:
                             if not has_entered_loco:
                                 has_entered_loco = True
-                                if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
-                                    print("\n[Odom] 机器人已切换至高位站立/工作模式，开始订阅 ROS2 /lio/odom 里程计并重置校准锚点！")
-                                    real_robot.subscribe_odom("/lio/odom")
-                                    odom_calibration["initial_pos_xy"] = None
-                                    odom_calibration["initial_pos_z"] = None
-                                    odom_calibration["initial_yaw_quat"] = None
+                                if state_cmd.skill_cmd == FSMCommand.LOCO or FSM_controller.cur_policy.name == FSMStateName.LOCOMODE:
+                                    if real_robot is not None and hasattr(real_robot, "subscribe_odom"):
+                                        print("\n[Odom] 机器人已切换至高位站立/工作模式，开始订阅 ROS2 /lio/odom 里程计并重置校准锚点！")
+                                        real_robot.subscribe_odom("/lio/odom")
+                                        odom_calibration["initial_pos_xy"] = None
+                                        odom_calibration["initial_pos_z"] = None
+                                        odom_calibration["initial_yaw_quat"] = None
+                                        vision_cache["last_pos"] = None
+                                        vision_cache["last_quat"] = None
+                                        sync_robot_state()
 
                         if prev_policy is not contactflow_policy and FSM_controller.cur_policy is contactflow_policy and not is_switching_to_omni:
                             print("\n[Odom Calibration] 兜底检测到已切换至 omnicontact，进行重置校准并执行 enter() 归零缓冲...")
@@ -1459,12 +1496,74 @@ if __name__ == "__main__":
                             if ros_torso_str == "None":
                                 ros_torso_str = f"Pos: [{lower_pos_rel[0]:.3f}, {lower_pos_rel[1]:.3f}, {lower_pos_rel[2]:.3f}] | Quat: [{lower_quat_rel[0]:.3f}, {lower_quat_rel[1]:.3f}, {lower_quat_rel[2]:.3f}, {lower_quat_rel[3]:.3f}] (计算GT)"
 
+                            odom_source_str = "ROS2 /lio/odom 雷达里程计" if (real_robot is not None and getattr(real_robot, "ros2_base_pos", None) is not None) else "Unitree DDS/默认反馈"
+                            sdk_base_pos_str = f"[{state_cmd.base_pos[0]:.4f}, {state_cmd.base_pos[1]:.4f}, {state_cmd.base_pos[2]:.4f}] (m)"
+                            sdk_base_quat_str = f"[{state_cmd.base_quat[0]:.4f}, {state_cmd.base_quat[1]:.4f}, {state_cmd.base_quat[2]:.4f}, {state_cmd.base_quat[3]:.4f}]"
+                            sdk_vel_str = f"LinVel=[{state_cmd.lin_vel[0]:.3f}, {state_cmd.lin_vel[1]:.3f}, {state_cmd.lin_vel[2]:.3f}] m/s | AngVel=[{state_cmd.ang_vel[0]:.3f}, {state_cmd.ang_vel[1]:.3f}, {state_cmd.ang_vel[2]:.3f}] rad/s"
+                            sdk_q_str = f"Q(前6维腿部)=[{', '.join([f'{val:.3f}' for val in state_cmd.q[:6]])}] | DQ(前6维)=[{', '.join([f'{val:.3f}' for val in state_cmd.dq[:6]])}]"
+
+                            if hasattr(contactflow_policy, "torso_quat"):
+                                t_head = yaw_quat(contactflow_policy.torso_quat)
+                            else:
+                                t_head = yaw_quat(state_cmd.base_quat)
+                            heading_str = f"[{t_head[0]:.4f}, {t_head[1]:.4f}, {t_head[2]:.4f}, {t_head[3]:.4f}]"
+
+                            if hasattr(contactflow_policy, "ref_base_pos") and len(getattr(contactflow_policy, "ref_base_pos", [])) > 0:
+                                idx = min(contactflow_policy.counter_step, len(contactflow_policy.ref_base_pos) - 1)
+                                ref_bp = contactflow_policy.ref_base_pos[idx]
+                                ref_lw = contactflow_policy.ref_left_wrist_pos[idx]
+                                ref_rw = contactflow_policy.ref_right_wrist_pos[idx]
+                                ref_traj_str = f"Base: [{ref_bp[0]:.3f}, {ref_bp[1]:.3f}, {ref_bp[2]:.3f}] | LWrist: [{ref_lw[0]:.3f}, {ref_lw[1]:.3f}, {ref_lw[2]:.3f}] | RWrist: [{ref_rw[0]:.3f}, {ref_rw[1]:.3f}, {ref_rw[2]:.3f}]"
+                            else:
+                                ref_traj_str = "当前非轨迹追踪阶段或参考轨迹未生成"
+
+                            cur_policy_name = getattr(FSM_controller.cur_policy, "name_str", str(getattr(FSM_controller.cur_policy, "name", "Unknown")))
+                            act_leg_str = f"[{', '.join([f'{val:.3f}' for val in policy_output_action[:6]])}]"
+                            act_arm_str = f"[{', '.join([f'{val:.3f}' for val in policy_output_action[-6:]])}]"
+                            kp_str = f"均值={np.mean(kps):.1f} | 前6维=[{', '.join([f'{val:.1f}' for val in kps[:6]])}]"
+                            kd_str = f"均值={np.mean(kds):.2f} | 前6维=[{', '.join([f'{val:.2f}' for val in kds[:6]])}]"
+                            lwrist_goal_str = f"[{', '.join([f'{val:.3f}' for val in wrist_state[:7]])}]"
+                            rwrist_goal_str = f"[{', '.join([f'{val:.3f}' for val in wrist_state[7:14]])}]"
+                            torso_goal_str = f"[{', '.join([f'{val:.3f}' for val in torso_goal[:7]])}]"
+                            contact_goal_str = f"[{', '.join([f'{val:.2f}' for val in contact_state])}]"
+
+                            log_msg = (
+                                f"=== Step: {log_step_counter} (Sim: {sim_counter}, Time: {time.time()-step_start:.3f}s, Mode: {cur_policy_name}) ===\n"
+                                f"[1. 接收到的底层原始状态 (当前里程计来源: {odom_source_str})]\n"
+                                f"   * ROS2 相机光学系 (/aruco/box_pose): {ros_cam_str}\n"
+                                f"   * ROS2 相对骨盆系 (/aruco/box_pose_pelvis): {ros_pelvis_str}\n"
+                                f"   * ROS2 相对胸口系 (/aruco/box_pose_torso_link): {ros_torso_str}\n"
+                                f"   * 里程计位置 (Base Pos - {odom_source_str}): {sdk_base_pos_str}\n"
+                                f"   * 里程计朝向 (Base Quat - {odom_source_str}): {sdk_base_quat_str}\n"
+                                f"   * 里程计速度 (Velocities - {odom_source_str}): {sdk_vel_str}\n"
+                                f"   * 关节电机反馈 (Joints): {sdk_q_str}\n"
+                                f"[2. 最终给 cf-gen (上层轨迹规划网络) 的输入]\n"
+                                f"   * 相对参考系: 【pelvis】 (经 SDK 偏航扭转角旋转补偿)\n"
+                                f"   * 物体相对位置 (Pos): [{upper_pos_rel[0]:.4f}, {upper_pos_rel[1]:.4f}, {upper_pos_rel[2]:.4f}] (m)\n"
+                                f"   * 物体相对姿态 (Quat): [{upper_quat_rel[0]:.4f}, {upper_quat_rel[1]:.4f}, {upper_quat_rel[2]:.4f}, {upper_quat_rel[3]:.4f}]\n"
+                                f"   * 目标摆放位置 (Goal Pos): [{goal_pos[0]:.4f}, {goal_pos[1]:.4f}, {goal_pos[2]:.4f}] (m)\n"
+                                f"   * 物体边界尺寸 (Box Dims): [{contactflow_policy.box_dims[0]:.3f}, {contactflow_policy.box_dims[1]:.3f}, {contactflow_policy.box_dims[2]:.3f}] (m)\n"
+                                f"[3. 最终给 cf-tracker (底层 RL 控制策略网络) 的输入]\n"
+                                f"   * 相对参考系: 【torso_link】 (剔除俯仰与翻滚后的水平 Yaw 朝向系)\n"
+                                f"   * 物体相对位置 (Pos): [{lower_pos_rel[0]:.4f}, {lower_pos_rel[1]:.4f}, {lower_pos_rel[2]:.4f}] (m)\n"
+                                f"   * 物体相对姿态 (Quat): [{lower_quat_rel[0]:.4f}, {lower_quat_rel[1]:.4f}, {lower_quat_rel[2]:.4f}, {lower_quat_rel[3]:.4f}]\n"
+                                f"   * 机器人水平朝向 (Heading Quat): {heading_str}\n"
+                                f"   * 实时参考追踪目标 (Ref Traj): {ref_traj_str}\n"
+                                f"[4. cf-tracker 输出给机器人的控制指令]\n"
+                                f"   * 当前控制策略模式: {cur_policy_name}\n"
+                                f"   * 下发电机关节指令 Actions / Target Q (35维, 均值={np.mean(policy_output_action):.3f}):\n"
+                                f"     - 腿部前6关节示例: {act_leg_str}\n"
+                                f"     - 手臂后6关节示例: {act_arm_str}\n"
+                                f"   * 控制刚度增益 Kps: {kp_str}\n"
+                                f"   * 控制阻尼增益 Kds: {kd_str}\n"
+                                f"   * 左手腕目标 (L-Wrist Goal): {lwrist_goal_str}\n"
+                                f"   * 右手腕目标 (R-Wrist Goal): {rwrist_goal_str}\n"
+                                f"   * 胸腔目标 (Torso Goal): {torso_goal_str}\n"
+                                f"   * 预期接触状态 (Contact): {contact_goal_str}\n"
+                                f"------------------------------------------------------------------\n"
+                            )
                             with open(log_file_path, "a", encoding="utf-8") as f:
-                                f.write(f"=== Step: {sim_counter} | FSM Policy: {FSM_controller.cur_policy.name_str} ===\n")
-                                f.write(f"[1. ROS2视觉&底层传感]\n  - ROS2 Camera Frame (/aruco/box_pose): {ros_cam_str}\n  - ROS2 Pelvis Frame (/aruco/box_pose_pelvis): {ros_pelvis_str}\n  - ROS2 Torso Frame (/aruco/box_pose_torso_link): {ros_torso_str}\n  - Robot Base (LIO/Odom Aligned): Pos: [{state_cmd.base_pos[0]:.3f}, {state_cmd.base_pos[1]:.3f}, {state_cmd.base_pos[2]:.3f}] | Quat: [{state_cmd.base_quat[0]:.3f}, {state_cmd.base_quat[1]:.3f}, {state_cmd.base_quat[2]:.3f}, {state_cmd.base_quat[3]:.3f}]\n")
-                                f.write(f"[2. 给 cf-gen (生成层) 输入]\n  - Upper Body Relative Pos/Quat: Pos [{upper_pos_rel[0]:.3f}, {upper_pos_rel[1]:.3f}, {upper_pos_rel[2]:.3f}] | Quat [{upper_quat_rel[0]:.3f}, {upper_quat_rel[1]:.3f}, {upper_quat_rel[2]:.3f}, {upper_quat_rel[3]:.3f}]\n")
-                                f.write(f"[3. 给 cf-tracker (跟踪层) 输入]\n  - Lower Body Relative Pos/Quat: Pos [{lower_pos_rel[0]:.3f}, {lower_pos_rel[1]:.3f}, {lower_pos_rel[2]:.3f}] | Quat [{lower_quat_rel[0]:.3f}, {lower_quat_rel[1]:.3f}, {lower_quat_rel[2]:.3f}, {lower_quat_rel[3]:.3f}]\n")
-                                f.write("-" * 68 + "\n\n")
+                                f.write(log_msg)
 
                         if sim_renderer is not None and sim_counter % 2 == 0:
                             sim_renderer.update_scene(d, camera="depth_camera")
@@ -1478,12 +1577,10 @@ if __name__ == "__main__":
                     update_reference_visualization()
                     viewer.sync()
                     if real_robot is not None:
-                        real_robot.send_motor_command(
+                        real_robot.send_joint_commands(
                             policy_output_action,
                             kps,
                             kds,
-                            torque_limit_mj,
-                            control_dt=simulation_dt,
                         )
                     else:
                         d.ctrl[:] = pd_control(
@@ -1496,6 +1593,10 @@ if __name__ == "__main__":
                             torque_limit_mj=torque_limit_mj,
                         )
                         d.qfrc_applied[:] = 0.0
+
+                        if getattr(sys.modules[__name__], "is_hanging", False) and real_robot is None:
+                            d.qpos[2] = 1.1  # 强制Z轴维持在1.1m (吊起高度)
+                            d.qvel[0:6] = 0.0 # 清除所有自由基座线/角速度以防下坠或侧翻
                         mujoco.mj_step(m, d)
 
                 except KeyboardInterrupt:
