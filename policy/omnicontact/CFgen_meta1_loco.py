@@ -24,7 +24,7 @@ FK_LINKS = (
     ("lw", "left_palm_link"),
     ("rw", "right_palm_link"),
 )
-DEFAULT_PELVIS_Z = 0.77
+DEFAULT_PELVIS_Z = 0.80
 NO_CONTACT = np.zeros(4, dtype=np.float32)
 
 KINEMATICS = MujocoKinematics(xml_path=f"{PROJECT_ROOT}/g1_description/g1_29dof.xml")

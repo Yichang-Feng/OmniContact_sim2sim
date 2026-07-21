@@ -554,10 +554,10 @@ class OmniContactStandPrepareTest(FSMState):
         self.action = self.ort_session.run(None, obs_dict)[0].squeeze()
         
         raw_actions = (self.action * self.action_scale_lab + self.default_angles_lab)[self.lab2mj]
-        target_kps = self.kps_lab[self.lab2mj]
-        target_kds = self.kds_lab[self.lab2mj]
+        target_kps = self.kps_lab[self.lab2mj] * 1.2
+        target_kds = self.kds_lab[self.lab2mj] * 1.2
         
-        blend_steps = 35
+        blend_steps = 25
         is_blend = getattr(self, "enable_transition_blend", True)
         
         # 【核心改造3：当处于 Stage 0 (预备站立态) 时，使用 ONNX 跟踪模型针对第 0 帧(z=0.79m 原地理想站立参考)输出 raw_actions 实时调姿站立，确保能把机器人平稳举起并牢牢站稳不动】
@@ -682,7 +682,7 @@ class OmniContactStandPrepareTest(FSMState):
                 
                 step_val = self.stage0_counter if self.manual_stage == 0 else self.counter_step
                 step_t = step_val * 0.02
-                blend_steps = 35
+                blend_steps = 25
                 if is_blend and step_val < blend_steps:
                     alpha = float(step_val) / float(blend_steps)
                     alpha_smooth = 0.5 * (1.0 - np.cos(alpha * np.pi))

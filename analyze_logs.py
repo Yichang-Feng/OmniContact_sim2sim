@@ -1,58 +1,89 @@
 import re
 
-def parse_log_and_print(filepath):
-    print(f"\n--- Analyzing {filepath} ---")
-    data = []
+def parse_log(filename):
+    data = {'step': [], 'mode': [], 'base_pos': [], 'lin_vel': [], 'ang_vel': []}
     
-    with open(filepath, 'r') as f:
-        content = f.read()
-        
-    blocks = content.split('=== Step:')
-    for block in blocks[1:]:
-        header_line = block.split('\n')[0]
-        m_header = re.search(r'\s*(\d+).*Time:\s*([0-9.]+)s.*?Mode:\s*([^)]+)', header_line)
-        if not m_header:
-            continue
-        step = int(m_header.group(1))
-        mode = m_header.group(3).strip()
-        
-        m_pos = re.search(r'Base Pos.*?: \[[^,]+, [^,]+, ([0-9.-]+)\]', block)
-        m_quat = re.search(r'Base Quat.*?: \[([0-9.-]+), ([0-9.-]+), ([0-9.-]+), ([0-9.-]+)\]', block)
-        m_vel = re.search(r'LinVel=\[([0-9.-]+), ([0-9.-]+), ([0-9.-]+)\].*?AngVel=\[([0-9.-]+), ([0-9.-]+), ([0-9.-]+)\]', block)
-        
-        if m_pos and m_quat and m_vel:
-            data.append({
-                'step': step,
-                'mode': mode,
-                'z': float(m_pos.group(1)),
-                'qx': float(m_quat.group(2)),
-                'qy': float(m_quat.group(3)),
-                'vz': float(m_vel.group(3)),
-                'wx': float(m_vel.group(4)),
-                'wy': float(m_vel.group(5)),
-            })
+    with open(filename, 'r', encoding='utf-8') as f:
+        current_mode = ""
+        current_step = 0
+        for line in f:
+            m = re.search(r'=== Step: (\d+) .*? Mode: (\w+) ===', line)
+            if m:
+                current_step = int(m.group(1))
+                current_mode = m.group(2)
             
-    # Find transition
-    trans_idx = -1
-    for i in range(1, len(data)):
-        if data[i]['mode'] != data[i-1]['mode']:
-            trans_idx = i
-            break
-            
-    if trans_idx != -1:
-        start_idx = max(0, trans_idx - 5)
-        end_idx = min(len(data), trans_idx + 10)
-        print(f"Transition from {data[trans_idx-1]['mode']} to {data[trans_idx]['mode']} at step {data[trans_idx]['step']}")
-        for i in range(start_idx, end_idx):
-            d = data[i]
-            marker = "--> " if i == trans_idx else "    "
-            print(f"{marker}Step: {d['step']:<5} | Mode: {d['mode']:<15} | Z: {d['z']:>6.4f} | Qx: {d['qx']:>7.4f} | Qy: {d['qy']:>7.4f} | Vz: {d['vz']:>7.4f} | Wx: {d['wx']:>7.4f} | Wy: {d['wy']:>7.4f}")
-    else:
-        print("No mode transition found.")
+            m = re.search(r'里程计位置 .*?: \[([-\.\d]+),\s*([-\.\d]+),\s*([-\.\d]+)\]', line)
+            if m:
+                pos = [float(m.group(1)), float(m.group(2)), float(m.group(3))]
+                
+            m = re.search(r'里程计速度 .*? LinVel=\[([-\.\d]+),\s*([-\.\d]+),\s*([-\.\d]+)\].*?AngVel=\[([-\.\d]+),\s*([-\.\d]+),\s*([-\.\d]+)\]', line)
+            if m:
+                lin_vel = [float(m.group(1)), float(m.group(2)), float(m.group(3))]
+                ang_vel = [float(m.group(4)), float(m.group(5)), float(m.group(6))]
+                
+                data['step'].append(current_step)
+                data['mode'].append(current_mode)
+                data['base_pos'].append(pos)
+                data['lin_vel'].append(lin_vel)
+                data['ang_vel'].append(ang_vel)
+                
+    return data
 
-for f in [
-    'object_pose_logging_stand_test.txt',
-    'object_pose_logging_stand_test_real4.txt',
-    'object_pose_logging_stand_test_real5.txt'
-]:
-    parse_log_and_print(f)
+def calc_variance(lst):
+    if len(lst) < 2: return 0.0
+    mean = sum(lst) / len(lst)
+    return sum((x - mean) ** 2 for x in lst) / len(lst)
+
+def calc_max_diff(lst):
+    if len(lst) < 2: return 0.0
+    return max(lst) - min(lst)
+
+def extract_omnicontact(data):
+    indices = [i for i, m in enumerate(data['mode']) if m and 'omnicontact' in m.lower()]
+    if not indices:
+        indices = list(range(len(data['mode'])))
+    pos = [data['base_pos'][i] for i in indices]
+    lin_vel = [data['lin_vel'][i] for i in indices]
+    ang_vel = [data['ang_vel'][i] for i in indices]
+    steps = [data['step'][i] for i in indices]
+    return steps, pos, lin_vel, ang_vel
+
+data2 = parse_log('object_pose_logging_stand_test_real2.txt')
+data3 = parse_log('object_pose_logging_stand_test_real3.txt')
+
+steps2, pos2, lin_vel2, ang_vel2 = extract_omnicontact(data2)
+steps3, pos3, lin_vel3, ang_vel3 = extract_omnicontact(data3)
+
+def print_stats(name, pos, lin_vel, ang_vel):
+    if not pos:
+        print(f"{name}: No data")
+        return
+        
+    pos_x = [p[0] for p in pos]
+    pos_y = [p[1] for p in pos]
+    pos_z = [p[2] for p in pos]
+    
+    lin_x = [v[0] for v in lin_vel]
+    lin_y = [v[1] for v in lin_vel]
+    
+    ang_roll = [v[0] for v in ang_vel]
+    ang_pitch = [v[1] for v in ang_vel]
+    
+    print(f"=== {name} ===")
+    print(f"Data points in omnicontact mode: {len(pos)}")
+    print(f"Base Pos Z (Height) - Mean: {sum(pos_z)/len(pos_z):.4f}, Max Diff: {calc_max_diff(pos_z):.4f}")
+    
+    print("\n[ 前后晃动指标 (Front/Back) ]")
+    print(f"  Pos X  - Variance: {calc_variance(pos_x):.6f}, Max Diff: {calc_max_diff(pos_x):.4f}")
+    print(f"  Lin X  - Variance: {calc_variance(lin_x):.6f}, Max Diff: {calc_max_diff(lin_x):.4f}")
+    print(f"  Pitch  - Variance: {calc_variance(ang_pitch):.6f}, Max Diff: {calc_max_diff(ang_pitch):.4f}")
+    
+    print("\n[ 左右晃动指标 (Left/Right) ]")
+    print(f"  Pos Y  - Variance: {calc_variance(pos_y):.6f}, Max Diff: {calc_max_diff(pos_y):.4f}")
+    print(f"  Lin Y  - Variance: {calc_variance(lin_y):.6f}, Max Diff: {calc_max_diff(lin_y):.4f}")
+    print(f"  Roll   - Variance: {calc_variance(ang_roll):.6f}, Max Diff: {calc_max_diff(ang_roll):.4f}")
+    print("")
+
+print_stats("Log 2", pos2, lin_vel2, ang_vel2)
+print_stats("Log 3", pos3, lin_vel3, ang_vel3)
+

@@ -1145,7 +1145,7 @@ if __name__ == "__main__":
                     base_pos[0] -= odom_calibration["initial_pos_xy"][0]
                     base_pos[1] -= odom_calibration["initial_pos_xy"][1]
                     if odom_calibration.get("initial_pos_z") is not None:
-                        base_pos[2] = (base_pos[2] - odom_calibration["initial_pos_z"]) + m.qpos0[2]
+                        base_pos[2] = (base_pos[2] - odom_calibration["initial_pos_z"]) + 0.77
 
                 if odom_calibration["initial_yaw_quat"] is None:
                     odom_calibration["initial_yaw_quat"] = yaw_quat(quat).astype(np.float32)
@@ -1197,7 +1197,7 @@ if __name__ == "__main__":
             base_pos[0] -= odom_calibration["initial_pos_xy"][0]
             base_pos[1] -= odom_calibration["initial_pos_xy"][1]
             if odom_calibration.get("initial_pos_z") is not None:
-                base_pos[2] = (base_pos[2] - odom_calibration["initial_pos_z"]) + m.qpos0[2]
+                base_pos[2] = (base_pos[2] - odom_calibration["initial_pos_z"]) + 0.77
 
             if odom_calibration["initial_yaw_quat"] is None:
                 odom_calibration["initial_yaw_quat"] = yaw_quat(quat).astype(np.float32)

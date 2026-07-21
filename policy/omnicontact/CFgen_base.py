@@ -298,7 +298,7 @@ class CfGenBase:
         )
         upper = np.concatenate(
             [
-                np.array([DEFAULT_PELVIS_Z], dtype=np.float64),
+                np.array([max(float(DEFAULT_PELVIS_Z), float(pelvis_seed[2]) + 1e-3)], dtype=np.float64),
                 np.array([np.deg2rad(60.0)], dtype=np.float64),
                 joint_upper,
             ]
