@@ -1124,6 +1124,9 @@ if __name__ == "__main__":
 
     odom_calibration = {"initial_pos_xy": None, "initial_pos_z": None, "initial_yaw_quat": None}
     vision_cache = {"last_pos": None, "last_quat": None}
+    
+    from collections import deque
+    sim_delay_buffer = deque(maxlen=1)  # 模拟 4 帧延迟 (在 50Hz 下是 80ms)
 
     def sync_robot_state():
         if real_robot is not None:
@@ -1175,7 +1178,7 @@ if __name__ == "__main__":
                 state_cmd.ang_vel = gyro.copy()
                 state_cmd.lin_vel = lin_vel.copy()
 
-                d.qpos[:3] = base_pos
+                d.qpos[:3] = base_pos_raw
                 d.qpos[3:7] = quat_aligned
                 d.qpos[7 : 7 + num_joints] = q
                 d.qvel[:3] = lin_vel
@@ -1202,13 +1205,33 @@ if __name__ == "__main__":
             quat_aligned = quat_mul(quat_conjugate(odom_calibration["initial_yaw_quat"]), quat).astype(np.float32)
             quat_aligned /= max(float(np.linalg.norm(quat_aligned)), 1e-8)
 
-            state_cmd.q = d.qpos[7 : 7 + num_joints].copy()
-            state_cmd.dq = d.qvel[6 : 6 + num_joints].copy()
-            state_cmd.gravity_ori = get_gravity_orientation(quat).copy()
-            state_cmd.base_pos = base_pos.copy()
-            state_cmd.base_quat = quat_aligned.copy()
-            state_cmd.ang_vel = d.qvel[3:6].copy()
-            state_cmd.lin_vel = d.qvel[0:3].copy()
+            # 1. 采集当前这一帧【完美】的仿真状态
+            perfect_state = {
+                "q": d.qpos[7 : 7 + num_joints].copy(),
+                "dq": d.qvel[6 : 6 + num_joints].copy(),
+                "gravity_ori": get_gravity_orientation(quat).copy(),
+                "base_pos": base_pos.copy(),
+                "base_quat": quat_aligned.copy(),
+                "ang_vel": d.qvel[3:6].copy(),
+                "lin_vel": d.qvel[0:3].copy()
+            }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+            # 2. 为 base_pos Y轴注入低频正弦漂移（模拟 SLAM 漂移，振幅 5cm）
+            perfect_state["base_pos"][1] += 0.00 * np.sin(time.time() * 2.0)
+
+            # 3. 将当前完美状态压入延迟队列
+            sim_delay_buffer.append(perfect_state)
+
+            # 4. 只把【最旧的一帧】(延迟后的状态) 喂给策略网络
+            delayed_state = sim_delay_buffer[0] 
+            
+            state_cmd.q = delayed_state["q"]
+            state_cmd.dq = delayed_state["dq"]
+            state_cmd.gravity_ori = delayed_state["gravity_ori"]
+            state_cmd.base_pos = delayed_state["base_pos"]
+            state_cmd.base_quat = delayed_state["base_quat"]
+            state_cmd.ang_vel = delayed_state["ang_vel"]
+            state_cmd.lin_vel = delayed_state["lin_vel"]
         sync_object_state()
 
     def set_mocap_pose(mocap_name: str, pose):

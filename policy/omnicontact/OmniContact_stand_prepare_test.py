@@ -315,10 +315,12 @@ class OmniContactStandPrepareTest(FSMState):
         # 【核心改造1：进入 Stage 0 时，严格以“理想默认站立姿态”创建初始参考轨迹与参考点】
         # 即使此时机器人从 Passive 倒地态或微歪态切入，也不以快倒下或飞起的姿态生成轨迹，
         # 确保所有可视化灰色参考点均处于完美的理想默认姿态（高度 z=0.79m），从根本上消除飞起或倾倒发散！
-        ideal_q = self.default_angles_lab[self.lab2mj].copy()
-        ideal_base_pos = np.array([self.state_cmd.base_pos[0], self.state_cmd.base_pos[1], 0.79], dtype=np.float32)
-        ideal_base_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        # 彻底平滑继承当前的真实物理状态，防止强制切入绝对零点导致 RL 网络出现巨大观测误差而暴走抽搐
+        ideal_q = self.state_cmd.q.copy()
+        ideal_base_pos = self.state_cmd.base_pos.copy()
+        ideal_base_quat = self.state_cmd.base_quat.copy().astype(np.float32)
         ideal_fk_info = self.kinematics.forward(ideal_q, ideal_base_pos, ideal_base_quat)
+        self.entry_fk_info = ideal_fk_info  # 保存真实的初始运动学状态，用于平滑过渡
 
         if self.reference_source == "CFgen":
             initialize_cfgen_reference(self, ideal_fk_info)
@@ -542,34 +544,19 @@ class OmniContactStandPrepareTest(FSMState):
                 bbox_rel_flat,
             ]
         )
-        
-        if getattr(self, "enable_transition_blend", True) and (self.counter_step == 0 and getattr(self, "manual_stage", 0) <= 1):
-            if self.stage0_counter == 0 and getattr(self, "manual_stage", 0) == 0:
-                zero_obs_prop = curr_obs_prop.copy()
-                zero_obs_prop[3:6] = 0.0
-                zero_obs_prop[38:67] = 0.0
-                self.obs_history_buffer[:] = zero_obs_prop
-            elif self.counter_step == 0 and getattr(self, "manual_stage", 0) == 1:
-                zero_obs_prop = curr_obs_prop.copy()
-                zero_obs_prop[3:6] = 0.0
-                zero_obs_prop[38:67] = 0.0
-                self.obs_history_buffer[:] = zero_obs_prop
-            else:
-                self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
-                self.obs_history_buffer[-1] = curr_obs_prop
-        else:
-            self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
-            self.obs_history_buffer[-1] = curr_obs_prop
+        self.obs_history_buffer = np.roll(self.obs_history_buffer, -1, axis=0)
+        self.obs_history_buffer[-1] = curr_obs_prop
 
         obs_history_flatten = self._flatten_obs_history()
         full_obs = np.concatenate([tracking_obs, obs_history_flatten]).astype(np.float32)
+        
         obs_dict = {self.input_names[0]: full_obs[None, ...], self.input_names[1]: np.array([[0.0]], dtype=np.float32)}
         self.action = self.ort_session.run(None, obs_dict)[0].squeeze()
-
+        
         raw_actions = (self.action * self.action_scale_lab + self.default_angles_lab)[self.lab2mj]
         target_kps = self.kps_lab[self.lab2mj]
         target_kds = self.kds_lab[self.lab2mj]
-
+        
         blend_steps = 35
         is_blend = getattr(self, "enable_transition_blend", True)
         
@@ -599,7 +586,6 @@ class OmniContactStandPrepareTest(FSMState):
             else:
                 self.policy_output.actions = raw_actions
                 self.policy_output.kps, self.policy_output.kds = target_kps, target_kds
-
         if (self.manual_stage == 0 and self.stage0_counter <= 35) or (self.manual_stage == 1 and self.counter_step <= 35):
             self._log_dense_transition_step(self.policy_output.actions, self.policy_output.kps)
 
