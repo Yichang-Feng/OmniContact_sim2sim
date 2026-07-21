@@ -367,45 +367,54 @@ class OmniContactStandPrepareTest(FSMState):
     def trigger_next_manual_stage(self):
         old_stage = getattr(self, "manual_stage", 0)
         if old_stage == 0:
+            if getattr(self, "_is_planning_stage1", False):
+                print("[OmniContact Stand Prepare Test] 正在异步规划中，请稍候...")
+                return 0
+                
             print(f"\n========================================================================================================================")
             print(f"[OmniContact Stand Prepare Test] 🚀 收到手柄/按键任务触发指令！准备由 Stage 0 进入 Stage 1...")
             print(f"   - 1. 实时读取实机最新的真正物理姿态 (base_pos/quat, q)...")
             print(f"   - 2. 实时锁死当前最新的物体系/相机识别坐标...")
-            print(f"   - 3. 正在在线执行 initialize_cfgen_reference()，根据最新箱子位置和真实站姿【重新计算最佳轨迹规划】！")
-            fk_info = self.kinematics.forward(self.state_cmd.q, self.state_cmd.base_pos, self.state_cmd.base_quat)
-            if self.reference_source == "CFgen":
-                initialize_cfgen_reference(self, fk_info)
-            elif self.reference_source == "NPZmotion":
-                load_tracking_npz_reference(self)
-
-            total_steps = len(self.ref_left_wrist_pos) - 1 if hasattr(self, "ref_left_wrist_pos") and self.ref_left_wrist_pos is not None else 0
-            if hasattr(self, "ref_phase") and self.ref_phase is not None and len(self.ref_phase) > 0:
-                idx_13 = np.where(self.ref_phase == 13)[0]
-                idx_11 = np.where(self.ref_phase == 11)[0]
-                if len(idx_13) > 0:
-                    self.stage_max_allowed_step[1] = int(idx_13[-1])
-                elif len(idx_11) > 0:
-                    self.stage_max_allowed_step[1] = int(idx_11[-1])
-                else:
-                    self.stage_max_allowed_step[1] = total_steps
-
-                idx_21 = np.where(self.ref_phase == 21)[0]
-                if len(idx_21) > 0:
-                    self.stage_max_allowed_step[2] = int(idx_21[-1])
-                else:
-                    idx_12 = np.where(self.ref_phase == 12)[0]
-                    self.stage_max_allowed_step[2] = int(idx_12[-1]) if len(idx_12) > 0 else total_steps
-            else:
-                self.stage_max_allowed_step[1] = total_steps
-                self.stage_max_allowed_step[2] = total_steps
-
-            self.stage_max_allowed_step[3] = total_steps
-
-            self.manual_stage = 1
-            self.counter_step = 0
-            self.enter_dof_pos = self.state_cmd.q.copy()
-            print(f"   - ✅ 真正轨迹计算完毕！已切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
-            print(f"========================================================================================================================\n")
+            print(f"   - 3. 正在【后台异步】执行 initialize_cfgen_reference()，防止阻塞底层通信导致掉电！")
+            
+            self._is_planning_stage1 = True
+            
+            # 保存快照传递给后台线程
+            state_snapshot = self._snapshot_state_cmd()
+            policy_snapshot = self._snapshot_cfgen_policy(state_snapshot)
+            fk_info = self.kinematics.forward(state_snapshot.q, state_snapshot.base_pos, state_snapshot.base_quat)
+            
+            with self.async_stage_lock:
+                self.async_stage_generation += 1
+                generation = self.async_stage_generation
+                self.async_stage_pending = None
+                self.async_stage_error = None
+                
+            def initial_plan_worker():
+                import time
+                start_t = time.perf_counter()
+                try:
+                    if policy_snapshot.reference_source == "CFgen":
+                        initialize_cfgen_reference(policy_snapshot, fk_info)
+                    elif policy_snapshot.reference_source == "NPZmotion":
+                        load_tracking_npz_reference(policy_snapshot)
+                        
+                    result = self._collect_async_stage_result(policy_snapshot, time.perf_counter() - start_t)
+                    with self.async_stage_lock:
+                        if generation == self.async_stage_generation:
+                            self.async_stage_pending = result
+                            self.async_stage_error = None
+                except Exception as exc:
+                    with self.async_stage_lock:
+                        if generation == self.async_stage_generation:
+                            self.async_stage_pending = None
+                            self.async_stage_error = exc
+                            
+            thread = threading.Thread(target=initial_plan_worker, daemon=True)
+            with self.async_stage_lock:
+                self.async_stage_thread = thread
+            thread.start()
+            
             return self.manual_stage
         else:
             self.manual_stage = min(old_stage + 1, 3)
@@ -586,6 +595,43 @@ class OmniContactStandPrepareTest(FSMState):
             else:
                 self.policy_output.actions = raw_actions
                 self.policy_output.kps, self.policy_output.kds = target_kps, target_kds
+
+        # --- 新增：检查异步规划是否完成 ---
+        if getattr(self, "_is_planning_stage1", False):
+            if self._apply_async_stage_plan():
+                self._is_planning_stage1 = False
+                
+                # 规划完成后，结算步数和状态
+                total_steps = len(self.ref_left_wrist_pos) - 1 if hasattr(self, "ref_left_wrist_pos") and self.ref_left_wrist_pos is not None else 0
+                if hasattr(self, "ref_phase") and self.ref_phase is not None and len(self.ref_phase) > 0:
+                    idx_13 = np.where(self.ref_phase == 13)[0]
+                    idx_11 = np.where(self.ref_phase == 11)[0]
+                    if len(idx_13) > 0:
+                        self.stage_max_allowed_step[1] = int(idx_13[-1])
+                    elif len(idx_11) > 0:
+                        self.stage_max_allowed_step[1] = int(idx_11[-1])
+                    else:
+                        self.stage_max_allowed_step[1] = total_steps
+
+                    idx_21 = np.where(self.ref_phase == 21)[0]
+                    if len(idx_21) > 0:
+                        self.stage_max_allowed_step[2] = int(idx_21[-1])
+                    else:
+                        idx_12 = np.where(self.ref_phase == 12)[0]
+                        self.stage_max_allowed_step[2] = int(idx_12[-1]) if len(idx_12) > 0 else total_steps
+                else:
+                    self.stage_max_allowed_step[1] = total_steps
+                    self.stage_max_allowed_step[2] = total_steps
+
+                self.stage_max_allowed_step[3] = total_steps
+
+                self.manual_stage = 1
+                self.counter_step = 0
+                self.enter_dof_pos = self.state_cmd.q.copy()
+                print(f"   - ✅ 后台轨迹计算完毕！已平滑切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
+                print(f"========================================================================================================================\n")
+        # ---------------------------------
+
         if (self.manual_stage == 0 and self.stage0_counter <= 35) or (self.manual_stage == 1 and self.counter_step <= 35):
             self._log_dense_transition_step(self.policy_output.actions, self.policy_output.kps)
 
