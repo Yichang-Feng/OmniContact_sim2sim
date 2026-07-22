@@ -174,6 +174,7 @@ class OmniContact(FSMState):
             push_relocate_stage=copy.deepcopy(getattr(self, "push_relocate_stage", "idle")),
             stackbox_stage_idx=int(getattr(self, "stackbox_stage_idx", 0)),
             stackbox_stage_count=int(getattr(self, "stackbox_stage_count", 3)),
+            reference_source=getattr(self, "reference_source", "CFgen"),
         )
         snapshot.bbox_scale = snapshot.box_dims * 2.0
         snapshot.bbox_offsets_scaled = snapshot.bbox_offsets * snapshot.bbox_scale.reshape(1, 3)

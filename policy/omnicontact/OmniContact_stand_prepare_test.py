@@ -174,6 +174,7 @@ class OmniContactStandPrepareTest(FSMState):
             push_relocate_stage=copy.deepcopy(getattr(self, "push_relocate_stage", "idle")),
             stackbox_stage_idx=int(getattr(self, "stackbox_stage_idx", 0)),
             stackbox_stage_count=int(getattr(self, "stackbox_stage_count", 3)),
+            reference_source=getattr(self, "reference_source", "CFgen"),
         )
         snapshot.bbox_scale = snapshot.box_dims * 2.0
         snapshot.bbox_offsets_scaled = snapshot.bbox_offsets * snapshot.bbox_scale.reshape(1, 3)
@@ -566,7 +567,7 @@ class OmniContactStandPrepareTest(FSMState):
         target_kps = self.kps_lab[self.lab2mj] * 1.2
         target_kds = self.kds_lab[self.lab2mj] * 1.2
         
-        blend_steps = 25
+        blend_steps = 50
         is_blend = getattr(self, "enable_transition_blend", True)
         
         # 【核心改造3：当处于 Stage 0 (预备站立态) 时，使用 ONNX 跟踪模型针对第 0 帧(z=0.79m 原地理想站立参考)输出 raw_actions 实时调姿站立，确保能把机器人平稳举起并牢牢站稳不动】
@@ -588,10 +589,7 @@ class OmniContactStandPrepareTest(FSMState):
                 alpha = float(self.counter_step) / float(blend_steps)
                 alpha_smooth = 0.5 * (1.0 - np.cos(alpha * np.pi))
                 self.policy_output.actions = (1.0 - alpha_smooth) * self.enter_dof_pos + alpha_smooth * raw_actions
-                enter_kps = np.full_like(target_kps, 150.0)
-                enter_kds = np.full_like(target_kds, 5.0)
-                self.policy_output.kps = (1.0 - alpha_smooth) * enter_kps + alpha_smooth * target_kps
-                self.policy_output.kds = (1.0 - alpha_smooth) * enter_kds + alpha_smooth * target_kds
+                self.policy_output.kps, self.policy_output.kds = target_kps, target_kds
             else:
                 self.policy_output.actions = raw_actions
                 self.policy_output.kps, self.policy_output.kds = target_kps, target_kds
@@ -601,38 +599,42 @@ class OmniContactStandPrepareTest(FSMState):
             if self._apply_async_stage_plan():
                 self._is_planning_stage1 = False
                 
-                # 规划完成后，结算步数和状态
-                total_steps = len(self.ref_left_wrist_pos) - 1 if hasattr(self, "ref_left_wrist_pos") and self.ref_left_wrist_pos is not None else 0
-                if hasattr(self, "ref_phase") and self.ref_phase is not None and len(self.ref_phase) > 0:
-                    idx_13 = np.where(self.ref_phase == 13)[0]
-                    idx_11 = np.where(self.ref_phase == 11)[0]
-                    if len(idx_13) > 0:
-                        self.stage_max_allowed_step[1] = int(idx_13[-1])
-                    elif len(idx_11) > 0:
-                        self.stage_max_allowed_step[1] = int(idx_11[-1])
+                if self.success == "failure":
+                    print(f"   - ❌ 后台轨迹计算失败！停留在 Stage 0...")
+                    print(f"========================================================================================================================\n")
+                else:
+                    # 规划完成后，结算步数和状态
+                    total_steps = len(self.ref_left_wrist_pos) - 1 if hasattr(self, "ref_left_wrist_pos") and self.ref_left_wrist_pos is not None else 0
+                    if hasattr(self, "ref_phase") and self.ref_phase is not None and len(self.ref_phase) > 0:
+                        idx_13 = np.where(self.ref_phase == 13)[0]
+                        idx_11 = np.where(self.ref_phase == 11)[0]
+                        if len(idx_13) > 0:
+                            self.stage_max_allowed_step[1] = int(idx_13[-1])
+                        elif len(idx_11) > 0:
+                            self.stage_max_allowed_step[1] = int(idx_11[-1])
+                        else:
+                            self.stage_max_allowed_step[1] = total_steps
+    
+                        idx_21 = np.where(self.ref_phase == 21)[0]
+                        if len(idx_21) > 0:
+                            self.stage_max_allowed_step[2] = int(idx_21[-1])
+                        else:
+                            idx_12 = np.where(self.ref_phase == 12)[0]
+                            self.stage_max_allowed_step[2] = int(idx_12[-1]) if len(idx_12) > 0 else total_steps
                     else:
                         self.stage_max_allowed_step[1] = total_steps
-
-                    idx_21 = np.where(self.ref_phase == 21)[0]
-                    if len(idx_21) > 0:
-                        self.stage_max_allowed_step[2] = int(idx_21[-1])
-                    else:
-                        idx_12 = np.where(self.ref_phase == 12)[0]
-                        self.stage_max_allowed_step[2] = int(idx_12[-1]) if len(idx_12) > 0 else total_steps
-                else:
-                    self.stage_max_allowed_step[1] = total_steps
-                    self.stage_max_allowed_step[2] = total_steps
-
-                self.stage_max_allowed_step[3] = total_steps
-
-                self.manual_stage = 1
-                self.counter_step = 0
-                self.enter_dof_pos = self.state_cmd.q.copy()
-                print(f"   - ✅ 后台轨迹计算完毕！已平滑切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
-                print(f"========================================================================================================================\n")
+                        self.stage_max_allowed_step[2] = total_steps
+    
+                    self.stage_max_allowed_step[3] = total_steps
+    
+                    self.manual_stage = 1
+                    self.counter_step = 0
+                    self.enter_dof_pos = self.state_cmd.q.copy()
+                    print(f"   - ✅ 后台轨迹计算完毕！已平滑切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
+                    print(f"========================================================================================================================\n")
         # ---------------------------------
 
-        if (self.manual_stage == 0 and self.stage0_counter <= 35) or (self.manual_stage == 1 and self.counter_step <= 35):
+        if (self.manual_stage == 0 and self.stage0_counter <= 50) or (self.manual_stage == 1 and self.counter_step <= 50):
             self._log_dense_transition_step(self.policy_output.actions, self.policy_output.kps)
 
         self.policy_output.wrist_goal = np.concatenate([l_p, l_q, r_p, r_q], axis=-1)
