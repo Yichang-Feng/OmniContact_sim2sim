@@ -75,7 +75,10 @@ class OmniContactStandPrepareTest(FSMState):
             self.action_scale_lab = np.array(config["action_scale_lab"], dtype=np.float32)
             self.enable_transition_blend = config.get("enable_transition_blend", True)
 
-            self.ort_session = onnxruntime.InferenceSession(self.onnx_path)
+            sess_options = onnxruntime.SessionOptions()
+            sess_options.intra_op_num_threads = 2
+            sess_options.inter_op_num_threads = 1
+            self.ort_session = onnxruntime.InferenceSession(self.onnx_path, sess_options)
             self.input_names = [inpt.name for inpt in self.ort_session.get_inputs()]
             self.kinematics = MujocoKinematics(
                 xml_path=os.path.join(PROJECT_ROOT, "g1_description", "g1_29dof.xml")
@@ -564,10 +567,10 @@ class OmniContactStandPrepareTest(FSMState):
         self.action = self.ort_session.run(None, obs_dict)[0].squeeze()
         
         raw_actions = (self.action * self.action_scale_lab + self.default_angles_lab)[self.lab2mj]
-        target_kps = self.kps_lab[self.lab2mj] * 1.2
-        target_kds = self.kds_lab[self.lab2mj] * 1.2
+        target_kps = self.kps_lab[self.lab2mj] * 1.25
+        target_kds = self.kds_lab[self.lab2mj] * 1.25
         
-        blend_steps = 50
+        blend_steps = 25
         is_blend = getattr(self, "enable_transition_blend", True)
         
         # 【核心改造3：当处于 Stage 0 (预备站立态) 时，使用 ONNX 跟踪模型针对第 0 帧(z=0.79m 原地理想站立参考)输出 raw_actions 实时调姿站立，确保能把机器人平稳举起并牢牢站稳不动】
@@ -577,7 +580,7 @@ class OmniContactStandPrepareTest(FSMState):
                 alpha = float(self.stage0_counter) / float(blend_steps)
                 alpha_smooth = 0.5 * (1.0 - np.cos(alpha * np.pi))
                 self.policy_output.actions = (1.0 - alpha_smooth) * self.enter_dof_pos + alpha_smooth * raw_actions
-                enter_kps = np.full_like(target_kps, 150.0)
+                enter_kps = np.full_like(target_kps, 200.0)
                 enter_kds = np.full_like(target_kds, 5.0)
                 self.policy_output.kps = (1.0 - alpha_smooth) * enter_kps + alpha_smooth * target_kps
                 self.policy_output.kds = (1.0 - alpha_smooth) * enter_kds + alpha_smooth * target_kds
@@ -693,14 +696,24 @@ class OmniContactStandPrepareTest(FSMState):
 
         self.policy_output.success = self.success
         self.policy_output.switch_to_loco = self.switch_to_loco
-        if getattr(self, "manual_phase_control_enabled", True) and hasattr(self, "stage_max_allowed_step"):
-            target_max_step = self.stage_max_allowed_step.get(getattr(self, "manual_stage", 0), len(self.ref_left_wrist_pos) - 1)
-            if self.counter_step < target_max_step:
-                self.counter_step += 1
-                if self.counter_step == target_max_step and target_max_step < (len(self.ref_left_wrist_pos) - 1):
-                    print(f"\n[OmniContact Stand Prepare Test] ⏸️ 机器人已到达 Stage {self.manual_stage} 终点 (Step {self.counter_step})，暂停自增并稳定保持当前姿态。请按手柄 L1+B 触发进入下一分段！\n")
+        is_stalled = getattr(self, "is_vision_stalled", False)
+        if is_stalled and getattr(self, "manual_stage", 0) > 0:
+            if not getattr(self, "_stalled_warned", False):
+                print(f"\n[OmniContact Stand Prepare Test] ⏸️ 检测到视觉数据断流！暂停轨迹推进 (保持当前姿态) 直到视觉恢复...\n")
+                self._stalled_warned = True
         else:
-            self.counter_step += 1
+            if getattr(self, "_stalled_warned", False):
+                print(f"\n[OmniContact Stand Prepare Test] ▶️ 视觉数据已恢复！继续推进轨迹...\n")
+                self._stalled_warned = False
+                
+            if getattr(self, "manual_phase_control_enabled", True) and hasattr(self, "stage_max_allowed_step"):
+                target_max_step = self.stage_max_allowed_step.get(getattr(self, "manual_stage", 0), len(self.ref_left_wrist_pos) - 1)
+                if self.counter_step < target_max_step:
+                    self.counter_step += 1
+                    if self.counter_step == target_max_step and target_max_step < (len(self.ref_left_wrist_pos) - 1):
+                        print(f"\n[OmniContact Stand Prepare Test] ⏸️ 机器人已到达 Stage {self.manual_stage} 终点 (Step {self.counter_step})，暂停自增并稳定保持当前姿态。请按手柄 L1+B 触发进入下一分段！\n")
+            else:
+                self.counter_step += 1
 
     def exit(self):
         print("OmniContactStandPrepareTest exited")

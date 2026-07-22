@@ -839,6 +839,13 @@ if __name__ == "__main__":
                 goal_pos[:] = g_pos
                 if hasattr(contactflow_policy, "goal_pos"):
                     contactflow_policy.goal_pos[:] = g_pos
+            
+            if sim_vision_stalled[0]:
+                valid_rel = False
+                valid = False
+                if sim_counter % 40 == 0:
+                    time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                    print(f"\r[{time_str}] [Vision Compare] ⌨️ V键模拟视觉断流中...   ", end="", flush=True)
                 if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
                     contactflow_policy.goal_pos_override[:] = g_pos
                 table_z_offset = float(contactflow_policy.box_dims[2]) + 0.005
@@ -856,22 +863,25 @@ if __name__ == "__main__":
                     v_yaw = float(np.degrees(np.arctan2(2*(v_quat[0]*v_quat[3] + v_quat[1]*v_quat[2]), 1 - 2*(v_quat[2]**2 + v_quat[3]**2))))
                     gt_quat = d.xquat[box_body_id]
                     gt_yaw = float(np.degrees(np.arctan2(2*(gt_quat[0]*gt_quat[3] + gt_quat[1]*gt_quat[2]), 1 - 2*(gt_quat[2]**2 + gt_quat[3]**2))))
-                    print(f"\r[Vision Compare] GT: [{gt_pos[0]:.2f}, {gt_pos[1]:.2f}, {gt_pos[2]:.2f}] | Est: [{v_pos[0]:.2f}, {v_pos[1]:.2f}, {v_pos[2]:.2f}] | EstYaw: {v_yaw:.1f}° (GT: {gt_yaw:.1f}°) | 误差: {err*100:.1f} cm   ", end="", flush=True)
+                    time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                    print(f"\r[{time_str}] [Vision Compare] GT: [{gt_pos[0]:.2f}, {gt_pos[1]:.2f}, {gt_pos[2]:.2f}] | Est: [{v_pos[0]:.2f}, {v_pos[1]:.2f}, {v_pos[2]:.2f}] | EstYaw: {v_yaw:.1f}° (GT: {gt_yaw:.1f}°) | 误差: {err*100:.1f} cm   ", end="", flush=True)
             else:
                 if real_robot is not None and vision_cache["last_pos"] is not None:
                     state_cmd.obj_pos = vision_cache["last_pos"].copy()
                     state_cmd.obj_quat = vision_cache["last_quat"].copy()
                     if sim_counter % 40 == 0:
-                        print(f"\r[Vision Compare]  视觉丢帧/遮挡！真机已自动保持上次有效位姿", end="", flush=True)
+                        time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                        print(f"\r[{time_str}] [Vision Compare]  视觉丢帧/遮挡！真机已自动保持上次有效位姿", end="", flush=True)
                 else:
                     state_cmd.obj_pos = gt_pos
                     state_cmd.obj_quat = d.xquat[box_body_id].copy()
                     needs_odom_calibration = True
-                    needs_odom_calibration = True
                     if sim_counter % 40 == 0:
-                        print(f"\r[Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
+                        time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                        print(f"\r[{time_str}] [Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
 
             if valid_rel:
+                setattr(contactflow_policy, "is_vision_stalled", False)
                 if upper_p_rel is not None:
                     vision_cache["last_rel_pelvis_pos"] = upper_p_rel.copy()
                     vision_cache["last_rel_pelvis_quat"] = upper_q_rel.copy()
@@ -885,6 +895,7 @@ if __name__ == "__main__":
                 state_cmd.use_direct_rel_poses = True
             else:
                 if real_robot is not None and vision_cache.get("last_rel_pelvis_pos") is not None:
+                    setattr(contactflow_policy, "is_vision_stalled", True)
                     state_cmd.rel_pelvis_pos = vision_cache["last_rel_pelvis_pos"].copy()
                     state_cmd.rel_pelvis_quat = vision_cache["last_rel_pelvis_quat"].copy()
                     if vision_cache.get("last_rel_torso_pos") is not None:
@@ -895,14 +906,28 @@ if __name__ == "__main__":
                     state_cmd.use_direct_rel_poses = False
         else:
             state_cmd.use_direct_rel_poses = False
-            if real_robot is not None and vision_cache["last_pos"] is not None:
-                state_cmd.obj_pos = vision_cache["last_pos"].copy()
-                state_cmd.obj_quat = vision_cache["last_quat"].copy()
+            
+            # 纯仿真下模拟视觉断流：不更新绝对坐标，使用上一帧缓存的坐标
+            if sim_vision_stalled[0]:
+                setattr(contactflow_policy, "is_vision_stalled", True)
+                if vision_cache.get("last_pos") is not None:
+                    state_cmd.obj_pos = vision_cache["last_pos"].copy()
+                    state_cmd.obj_quat = vision_cache["last_quat"].copy()
+                else:
+                    state_cmd.obj_pos = d.xpos[box_body_id].copy()
+                    state_cmd.obj_quat = d.xquat[box_body_id].copy()
             else:
-                state_cmd.obj_pos = d.xpos[box_body_id].copy()
-                state_cmd.obj_quat = d.xquat[box_body_id].copy()
-                needs_odom_calibration = True
-                needs_odom_calibration = True
+                setattr(contactflow_policy, "is_vision_stalled", False)
+                if real_robot is not None and vision_cache.get("last_pos") is not None:
+                    state_cmd.obj_pos = vision_cache["last_pos"].copy()
+                    state_cmd.obj_quat = vision_cache["last_quat"].copy()
+                else:
+                    state_cmd.obj_pos = d.xpos[box_body_id].copy()
+                    state_cmd.obj_quat = d.xquat[box_body_id].copy()
+                    vision_cache["last_pos"] = state_cmd.obj_pos.copy()
+                    vision_cache["last_quat"] = state_cmd.obj_quat.copy()
+                
+            needs_odom_calibration = True
 
         # 模拟z方向视觉偏差
         # if real_robot is None:
@@ -1298,12 +1323,19 @@ if __name__ == "__main__":
     log_step_counter = 0
     has_entered_loco = False
     last_logged_phase_id = None
+    sim_vision_stalled = [False]
     with open(log_file_path, "w", encoding="utf-8") as f:
         f.write("# OmniContact 预备站立与在线规划测试调试日志 (每50帧记录一次)\n")
         f.write("# ------------------------------------------------------------------\n\n")
 
     def key_callback(keycode):
         global is_hanging
+        # 键盘 V 键：模拟视觉断流
+        if keycode in (118, 86):
+            sim_vision_stalled[0] = not sim_vision_stalled[0]
+            status = "已断流 (策略将暂停推进)" if sim_vision_stalled[0] else "已恢复更新"
+            print(f"\n[key_callback] ⌨️ 键盘按下 V，模拟视觉断流状态切换为: {status}\n")
+
         # 键盘 Z 键：切换吊起/放下状态 (104 for lowercase 'h', 72 for 'H')
         if keycode in (122, 90):
             is_hanging = not is_hanging

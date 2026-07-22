@@ -14,6 +14,7 @@ OmniContact ROS2 <-> UDP Bridge
 import socket
 import json
 import time
+import datetime
 import argparse
 import sys
 import os
@@ -54,6 +55,16 @@ class ROS2UDPBridge(Node):
         self.create_subscription(PoseStamped, "/aruco/box_pose_pelvis", lambda msg: self.pose_callback(msg, "pelvis"), 10)
         self.create_subscription(PoseStamped, "/aruco/box_pose_torso_link", lambda msg: self.pose_callback(msg, "torso"), 10)
         
+        # 初始化卡顿检测状态
+        self.last_odom_time = time.time()
+        self.odom_frozen = False
+        
+        self.last_pose_time = {"cam": time.time(), "pelvis": time.time(), "torso": time.time()}
+        self.pose_frozen = {"cam": False, "pelvis": False, "torso": False}
+        
+        # 创建定时器检测超时 (2Hz / 0.5s)
+        self.create_timer(0.2, self.check_stall)
+
         print("=" * 60)
         print(" 🚀 OmniContact ROS2 <-> UDP 桥接服务启动成功！")
         print("=" * 60)
@@ -62,6 +73,27 @@ class ROS2UDPBridge(Node):
         print(f" 🧭 雷达里程计转发端口   : {odom_port} ({odom_topic})")
         print("=" * 60)
         print("现在请在另一个终端中激活 (omnicontact) Conda 环境运行实机部署脚本！")
+
+    def check_stall(self):
+        current_time = time.time()
+        time_str = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        
+        odom_delay = current_time - self.last_odom_time
+        if odom_delay > 0.5:
+            if not self.odom_frozen:
+                print(f"\n[{time_str}] [⚠️ 警告] 雷达里程计数据断流！已超过 0.5 秒未收到新数据。")
+                self.odom_frozen = True
+        else:
+            self.odom_frozen = False
+            
+        for frame_type, last_time in self.last_pose_time.items():
+            pose_delay = current_time - last_time
+            if pose_delay > 0.5:
+                if not self.pose_frozen[frame_type]:
+                    print(f"\n[{time_str}] [⚠️ 警告] 视觉位姿 ({frame_type}) 数据断流！已超过 0.5 秒未收到新数据。")
+                    self.pose_frozen[frame_type] = True
+            else:
+                self.pose_frozen[frame_type] = False
 
     def send_udp(self, data, addr):
         try:
@@ -74,6 +106,10 @@ class ROS2UDPBridge(Node):
         pos = msg.pose.pose.position
         q = msg.pose.pose.orientation
         vel = msg.twist.twist.linear
+
+        self.last_odom_time = time.time()
+        self.odom_frozen = False
+
         data = {
             "type": "odom",
             "pos": [pos.x, pos.y, pos.z],
@@ -82,10 +118,21 @@ class ROS2UDPBridge(Node):
             "time": time.time()
         }
         self.send_udp(data, self.odom_addr)
+        
+        # 添加用于调试的打印输出 (每20帧打印一次，大概2秒)
+        if not hasattr(self, 'odom_print_counter'):
+            self.odom_print_counter = 0
+        self.odom_print_counter += 1
+        if self.odom_print_counter % 20 == 0:
+            print(f"\\r[Odom Bridge] 发送UDP - Pos: [{pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f}] | Vel: [{vel.x:.3f}, {vel.y:.3f}, {vel.z:.3f}]      ", end="", flush=True)
 
     def pose_callback(self, msg, frame_type):
         pos = msg.pose.position
         q = msg.pose.orientation
+
+        self.last_pose_time[frame_type] = time.time()
+        self.pose_frozen[frame_type] = False
+
         data = {
             "type": "aruco",
             "frame": frame_type,
