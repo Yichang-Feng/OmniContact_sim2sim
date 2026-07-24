@@ -858,13 +858,19 @@ if __name__ == "__main__":
                 vision_cache["last_quat"] = v_quat.copy()
                 state_cmd.obj_pos = v_pos
                 state_cmd.obj_quat = v_quat
-                err = float(np.linalg.norm(v_pos - gt_pos))
                 if sim_counter % 40 == 0:
-                    v_yaw = float(np.degrees(np.arctan2(2*(v_quat[0]*v_quat[3] + v_quat[1]*v_quat[2]), 1 - 2*(v_quat[2]**2 + v_quat[3]**2))))
-                    gt_quat = d.xquat[box_body_id]
-                    gt_yaw = float(np.degrees(np.arctan2(2*(gt_quat[0]*gt_quat[3] + gt_quat[1]*gt_quat[2]), 1 - 2*(gt_quat[2]**2 + gt_quat[3]**2))))
+                    base_yaw_q = yaw_quat(state_cmd.base_quat)
+                    p_footprint = np.array([state_cmd.base_pos[0], state_cmd.base_pos[1], 0.0], dtype=np.float32)
+                    v_pos_footprint = quat_apply(quat_conjugate(base_yaw_q), v_pos - p_footprint)
+                    
+                    v_quat_footprint = quat_mul(quat_conjugate(base_yaw_q), v_quat)
+                    v_yaw_footprint = float(np.degrees(np.arctan2(
+                        2*(v_quat_footprint[0]*v_quat_footprint[3] + v_quat_footprint[1]*v_quat_footprint[2]), 
+                        1 - 2*(v_quat_footprint[2]**2 + v_quat_footprint[3]**2)
+                    )))
+
                     time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
-                    print(f"\r[{time_str}] [Vision Compare] GT: [{gt_pos[0]:.2f}, {gt_pos[1]:.2f}, {gt_pos[2]:.2f}] | Est: [{v_pos[0]:.2f}, {v_pos[1]:.2f}, {v_pos[2]:.2f}] | EstYaw: {v_yaw:.1f}° (GT: {gt_yaw:.1f}°) | 误差: {err*100:.1f} cm   ", end="", flush=True)
+                    print(f"\r[{time_str}] [Vision Realtime] 相对于机器人: X={v_pos_footprint[0]:.2f}m, Y={v_pos_footprint[1]:.2f}m, Z={v_pos_footprint[2]:.2f}m | 相对朝向: {v_yaw_footprint:.1f}°   ", end="", flush=True)
             else:
                 if real_robot is not None and vision_cache["last_pos"] is not None:
                     state_cmd.obj_pos = vision_cache["last_pos"].copy()
