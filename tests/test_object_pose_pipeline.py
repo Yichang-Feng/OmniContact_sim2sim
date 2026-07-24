@@ -276,6 +276,124 @@ class TestObjectPosePipeline(unittest.TestCase):
         self.assertTrue(state_stage0.valid)
         self.assertTrue(state_stage0.source_id.startswith("fallback"))
 
+    def test_static_anchor_dead_reckoning(self):
+        """Test that static anchor allows dead-reckoning during vision loss and robot movement."""
+        class SimpleStateCmd:
+            def __init__(self, pos, quat):
+                self.base_pos = pos
+                self.base_quat = quat
+                self.q = np.zeros(29, dtype=np.float32)
+
+        obj_world = np.array([1.0, 0.0, 0.2], dtype=np.float32)
+        obj_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+        # 1. Stage 0: 6 stable frames to lock anchor
+        for i in range(6):
+            state_cmd = SimpleStateCmd(
+                pos=np.array([0.0, 0.0, 0.8], dtype=np.float32),
+                quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            )
+            robot_state = self.state_provider.update_from_state_cmd(state_cmd, timestamp=float(i))
+
+            torso_pose = robot_state.link_poses[FRAME_TORSO_LINK]
+            rel_pos, rel_quat = subtract_frame_transforms(
+                torso_pose.pos,
+                torso_pose.quat,
+                obj_world,
+                obj_quat,
+            )
+
+            source = Ros2ObjectPoseSource()
+            source.update_raw_torso_pose(rel_pos, rel_quat, timestamp=float(i))
+
+            ctx = PerceptionContext(manual_stage=0, current_phase=11)
+            state = self.pipeline.update(source.get_measurements(), robot_state, ctx)
+
+        self.assertTrue(self.pipeline.static_anchor_locked)
+        self.assertIsNotNone(self.pipeline.static_anchor_pose)
+
+        # 2. Vision lost, robot moves forward by 0.3 m
+        state_cmd_moved = SimpleStateCmd(
+            pos=np.array([0.3, 0.0, 0.8], dtype=np.float32),
+            quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+        )
+        robot_state_moved = self.state_provider.update_from_state_cmd(state_cmd_moved, timestamp=7.0)
+
+        ctx_stage1 = PerceptionContext(manual_stage=1, current_phase=11)
+        state_no_vision = self.pipeline.update({}, robot_state_moved, ctx_stage1)
+
+        self.assertTrue(state_no_vision.valid)
+        self.assertEqual(state_no_vision.source_id, "static_world_anchor")
+
+        # Object world should remain static
+        np.testing.assert_allclose(state_no_vision.obj_pos_world, obj_world, atol=0.03)
+
+        # But relative torso x should decrease by ~0.3m
+        self.assertLess(state_no_vision.obj_pos_torso_yaw[0], 0.8)
+
+    def test_stale_measurement_uses_static_anchor(self):
+        """Verify that a stale vision measurement correctly falls back to static anchor."""
+        class SimpleStateCmd:
+            def __init__(self, pos, quat):
+                self.base_pos = pos
+                self.base_quat = quat
+                self.q = np.zeros(29, dtype=np.float32)
+
+        obj_world = np.array([1.0, 0.0, 0.2], dtype=np.float32)
+        obj_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+        # Lock anchor
+        for i in range(6):
+            state_cmd = SimpleStateCmd(pos=np.array([0.0, 0.0, 0.8], dtype=np.float32), quat=yaw_to_quat(0.0))
+            robot_state = self.state_provider.update_from_state_cmd(state_cmd, timestamp=float(i))
+            torso_pose = robot_state.link_poses[FRAME_TORSO_LINK]
+            rel_pos, rel_quat = subtract_frame_transforms(torso_pose.pos, torso_pose.quat, obj_world, obj_quat)
+            source = Ros2ObjectPoseSource()
+            source.update_raw_torso_pose(rel_pos, rel_quat, timestamp=float(i))
+            self.pipeline.update(source.get_measurements(), robot_state, PerceptionContext(manual_stage=0, current_phase=11))
+
+        self.assertTrue(self.pipeline.static_anchor_locked)
+
+        # Provide a stale measurement (timestamp is older than validation tolerance)
+        robot_state_now = self.state_provider.update_from_state_cmd(SimpleStateCmd(pos=np.array([0.1, 0.0, 0.8], dtype=np.float32), quat=yaw_to_quat(0.0)), timestamp=7.0)
+        source_stale = Ros2ObjectPoseSource()
+        # Stale measurement timestamp is 6.0, robot state is 7.0 (delta > 0.5s typical threshold)
+        source_stale.update_raw_torso_pose(np.array([0.9, 0.0, 0.0], dtype=np.float32), obj_quat, timestamp=6.0)
+        
+        ctx = PerceptionContext(manual_stage=1, current_phase=11)
+        state_stale = self.pipeline.update(source_stale.get_measurements(), robot_state_now, ctx)
+
+        self.assertTrue(state_stale.valid)
+        self.assertEqual(state_stale.source_id, "static_world_anchor")
+
+    def test_held_prior_unlock_after_phase25(self):
+        """Verify that held object prior is unlocked when phase >= 25."""
+        class SimpleStateCmd:
+            def __init__(self, pos, quat):
+                self.base_pos = pos
+                self.base_quat = quat
+                self.q = np.zeros(29, dtype=np.float32)
+
+        obj_world = np.array([1.0, 0.0, 0.8], dtype=np.float32)
+        obj_quat = yaw_to_quat(0.0)
+
+        robot_state = self.state_provider.update_from_state_cmd(SimpleStateCmd(np.array([0.0, 0.0, 0.8], dtype=np.float32), yaw_to_quat(0.0)), timestamp=1.0)
+        torso_pose = robot_state.link_poses[FRAME_TORSO_LINK]
+        rel_pos, rel_quat = subtract_frame_transforms(torso_pose.pos, torso_pose.quat, obj_world, obj_quat)
+        source = Ros2ObjectPoseSource()
+        source.update_raw_torso_pose(rel_pos, rel_quat, timestamp=1.0)
+
+        # Enter carry phase
+        ctx_carry = PerceptionContext(manual_stage=3, current_phase=22, is_holding_object=True)
+        self.pipeline.update(source.get_measurements(), robot_state, ctx_carry)
+        self.assertTrue(self.pipeline.held_object_locked)
+
+        # Transition to drop phase
+        ctx_drop = PerceptionContext(manual_stage=4, current_phase=25, is_holding_object=False)
+        self.pipeline.update(source.get_measurements(), robot_state, ctx_drop)
+        self.assertFalse(self.pipeline.held_object_locked)
+        self.assertIsNone(self.pipeline.held_T_pelvis_obj)
+
     def test_no_approx_rel_in_deploy_scripts(self):
         """Assert deploy_omnicontact_stand_prepare_test.py contains NO hardcoded approx_rel_pelvis_pos."""
         script_path = "/home/feng/OmniContact_sim2sim/deploy_omnicontact/deploy_omnicontact_stand_prepare_test.py"

@@ -912,7 +912,10 @@ if __name__ == "__main__":
         state_cmd.object_pose_state = pose_state
 
         # Update contactflow_policy flags
+        vision_measurement_valid = str(pose_state.source_id).startswith("ros2") or str(pose_state.source_id) == "sim_gt"
+        setattr(contactflow_policy, "is_vision_measurement_valid", vision_measurement_valid)
         setattr(contactflow_policy, "is_vision_stalled", not pose_state.valid)
+        setattr(contactflow_policy, "is_object_pose_valid", pose_state.valid)
 
         # Log Pipeline Diagnostics and World Consistency
         if sim_counter % 80 == 0:
@@ -1110,8 +1113,18 @@ if __name__ == "__main__":
                 sync_robot_state()
                 sync_object_state()
                 pose_state = getattr(state_cmd, "object_pose_state", None)
-                if pose_state is not None and (not pose_state.valid or pose_state.source_id.startswith("fallback") or pose_state.source_id == "none"):
-                    print(f"\n[Stage 1 Blocked]  视觉/感知状态无效 ({pose_state.valid_reason}, source={pose_state.source_id})，拒绝进入 Stage 1 规划！")
+                allowed_sources = {
+                    "ros2_torso_link",
+                    "sim_gt",
+                    "static_world_anchor",
+                    "static_world_anchor_outlier_rejection",
+                    "fallback_hold_last_valid",
+                    "held_object_prior_locked",
+                }
+                if pose_state is None or not pose_state.valid:
+                    print(f"\n[Stage 1 Blocked]  视觉/感知状态无效 ({getattr(pose_state, 'valid_reason', 'none')}, source={getattr(pose_state, 'source_id', 'none')})，拒绝进入 Stage 1 规划！")
+                elif pose_state.source_id not in allowed_sources:
+                    print(f"\n[Stage 1 Blocked]  视觉源 {pose_state.source_id} 不在允许列表中，拒绝进入 Stage 1 规划！")
                 else:
                     contactflow_policy.trigger_next_manual_stage()
 
@@ -1156,6 +1169,8 @@ if __name__ == "__main__":
                         odom_calibration["initial_pos_z"] = float(base_pos[2])
                         odom_calibration["_just_reset_smooth"] = True
                         print(f"\n[Odom Calibration] 🛰️ 锁定初始位移锚点 XY: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}], Z: {odom_calibration['initial_pos_z']:.3f}m")
+                        if "object_pose_pipeline" in globals() or "object_pose_pipeline" in locals():
+                            object_pose_pipeline.reset()
                     base_pos[0] -= odom_calibration["initial_pos_xy"][0]
                     base_pos[1] -= odom_calibration["initial_pos_xy"][1]
                     if odom_calibration.get("initial_pos_z") is not None:
@@ -1208,6 +1223,8 @@ if __name__ == "__main__":
                 odom_calibration["initial_pos_xy"] = base_pos[:2].copy()
                 odom_calibration["initial_pos_z"] = float(base_pos[2])
                 print(f"\n[Sim Odom Calibration] 🛰️ 仿真模式锁定雷达里程计锚点 XY: [{odom_calibration['initial_pos_xy'][0]:.3f}, {odom_calibration['initial_pos_xy'][1]:.3f}], 原始雷达Z: {odom_calibration['initial_pos_z']:.3f}m -> 映射对齐至目标站立高: {m.qpos0[2]:.3f}m")
+                if "object_pose_pipeline" in globals() or "object_pose_pipeline" in locals():
+                    object_pose_pipeline.reset()
             base_pos[0] -= odom_calibration["initial_pos_xy"][0]
             base_pos[1] -= odom_calibration["initial_pos_xy"][1]
             if odom_calibration.get("initial_pos_z") is not None:
@@ -1385,8 +1402,18 @@ if __name__ == "__main__":
                 sync_robot_state()
                 sync_object_state()
                 pose_state = getattr(state_cmd, "object_pose_state", None)
-                if pose_state is not None and (not pose_state.valid or pose_state.source_id.startswith("fallback") or pose_state.source_id == "none"):
-                    print(f"\n[Stage 1 Blocked]  视觉/感知状态无效 ({pose_state.valid_reason}, source={pose_state.source_id})，拒绝进入 Stage 1 规划！")
+                allowed_sources = {
+                    "ros2_torso_link",
+                    "sim_gt",
+                    "static_world_anchor",
+                    "static_world_anchor_outlier_rejection",
+                    "fallback_hold_last_valid",
+                    "held_object_prior_locked",
+                }
+                if pose_state is None or not pose_state.valid:
+                    print(f"\n[Stage 1 Blocked]  视觉/感知状态无效 ({getattr(pose_state, 'valid_reason', 'none')}, source={getattr(pose_state, 'source_id', 'none')})，拒绝进入 Stage 1 规划！")
+                elif pose_state.source_id not in allowed_sources:
+                    print(f"\n[Stage 1 Blocked]  视觉源 {pose_state.source_id} 不在允许列表中，拒绝进入 Stage 1 规划！")
                 else:
                     contactflow_policy.trigger_next_manual_stage()
                     if preview_mode:

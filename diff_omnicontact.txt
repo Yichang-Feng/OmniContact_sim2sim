@@ -139,7 +139,7 @@
 +            self.manual_stage = 1
 +            self.counter_step = 0
 +            self.enter_dof_pos = self.state_cmd.q.copy()
-+            print(f"   - ✅ 真正轨迹计算完毕！已切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
++            print(f"   -  真正轨迹计算完毕！已切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
 +            print(f"========================================================================================================================\n")
 +            return self.manual_stage
 +        else:

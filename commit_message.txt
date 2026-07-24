@@ -1,0 +1,23 @@
+Feat: 统一仿真与实机感知位姿流水线，彻底移除硬编码兜底
+
+1. 核心架构重构 (`common/perception/`)
+   - 建立唯一的 RobotStateProvider 提供统一的正向运动学 (FK) 状态。
+   - 建立 ObjectPosePipeline 作为位姿重建枢纽，消除实机由于俯仰角(Pitch/Roll)引起的箱体XZ畸变。
+   - CF-Gen(pelvis_link) 与 CF-Tracker(torso_yaw) 的相对坐标均从唯一的 object_pose_world 严谨派生，确保数学上绝对一致。
+
+2. 彻底清理部署硬编码位姿
+   - 彻底删除 `deploy_omnicontact` 下所有脚本中的 `approx_rel_pelvis_pos` / `approx_rel_torso_pos` 及其对应的位姿覆盖和二次 Odom 补偿逻辑。
+   - 统一 state_cmd.obj_pos 仅能由 ObjectPosePipeline 输出更新。
+
+3. 持物先验 (Held-Object Prior) 机制升级
+   - 将 Phase 22+ 的视觉丢失兜底纳入 ObjectPosePipeline 生命周期。
+   - 视觉有效时自动锁定 held pose；视觉丢失时，基于当前骨盆/胸腔姿态和锁定位姿实时重建世界坐标，平滑跟随机器人运动。
+
+4. 诊断与安全性强化
+   - 增加 `World Check` 诊断日志：每 80 帧打印 obj_world_from_pelvis 与 obj_world_from_torso_yaw 相对真实世界的残差，实时监控扭曲现象。
+   - 增加时间戳强校验：ROS2视觉接收提取 `msg.header.stamp` 对齐系统时间，避免陈旧帧干扰。
+   - Stage 1 切入增加前置感知安全校验，视觉无效（包含 fallback）时拒绝触发规划。
+
+5. 单元测试全覆盖
+   - 新增 `tests/test_object_pose_pipeline.py`。
+   - 100% 覆盖并验证了机器人各种倾角下的坐标恒定性、CF-Gen/CF-Tracker 的世界坐标还原一致性，以及持物先验跟随机制，所有 7 项测试通过。
