@@ -21,7 +21,20 @@ from common.ctrlcomp import PolicyOutput, StateAndCmd
 from FSM.FSM import FSM
 from common.utils import FSMCommand, FSMStateName, get_gravity_orientation, quat_mul, quat_conjugate, yaw_quat, quat_apply, subtract_frame_transforms, yaw_to_quat
 from common.joystick import JoyStick, JoystickButton
+from common.perception import (
+    RobotStateProvider,
+    ObjectPosePipeline,
+    Ros2ObjectPoseSource,
+    SimObjectPoseSource,
+    PerceptionContext,
+    FRAME_TORSO_LINK,
+    FRAME_PELVIS_LINK,
+    FRAME_TORSO_YAW,
+)
 import threading
+
+preview_mode = False
+preview_index = 0
 
 class ROS2ArucoReceiver:
     """
@@ -49,7 +62,7 @@ class ROS2ArucoReceiver:
             
             self.spin_thread = threading.Thread(target=lambda: rclpy.spin(self.node), daemon=True)
             self.spin_thread.start()
-            print(f"\n[ROS2ArucoReceiver] ✅ 成功启动 ROS2 监听后台线程！正在订阅以下位姿话题:\n  - {topic_cam} (优先: 相机系 /aruco/box_pose)\n  - {topic_pelvis} (次选: 骨盆系 /aruco/box_pose_pelvis)\n  - {topic_torso} (备选: 胸口系 /aruco/box_pose_torso_link)\n")
+            print(f"\n[ROS2ArucoReceiver]  成功启动 ROS2 监听后台线程！正在订阅以下位姿话题:\n  - {topic_cam} (优先: 相机系 /aruco/box_pose)\n  - {topic_pelvis} (次选: 骨盆系 /aruco/box_pose_pelvis)\n  - {topic_torso} (备选: 胸口系 /aruco/box_pose_torso_link)\n")
         except Exception as e:
             print(f"\n[ROS2ArucoReceiver] ℹ️ 原生 ROS2 节点加载失败 ({e})。自动启动 UDP 视觉桥接监听 (端口: 9876)...\n")
             self._start_udp_listener(port=9876)
@@ -61,9 +74,9 @@ class ROS2ArucoReceiver:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("0.0.0.0", port))
-                print(f"[ROS2ArucoReceiver] ✅ UDP 视觉桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 AprilTag 位姿...")
+                print(f"[ROS2ArucoReceiver]  UDP 视觉桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 AprilTag 位姿...")
             except Exception as err:
-                print(f"[ROS2ArucoReceiver] ❌ UDP 端口 {port} 绑定失败: {err}")
+                print(f"[ROS2ArucoReceiver]  UDP 端口 {port} 绑定失败: {err}")
                 return
             while True:
                 try:
@@ -750,6 +763,8 @@ if __name__ == "__main__":
     def reset_replan_session():
         replan_state.reset_session()
         contactflow_policy.replan_active = False
+        if "object_pose_pipeline" in locals() or "object_pose_pipeline" in globals():
+            object_pose_pipeline.reset()
 
     def wtac_carrybox_replan_enabled() -> bool:
         return (
@@ -823,150 +838,127 @@ if __name__ == "__main__":
     def should_apply_replan_object_quat_offset() -> bool:
         return wtac_carrybox_replan_enabled() and bool(getattr(contactflow_policy, "replan_active", False))
 
+    robot_state_provider = RobotStateProvider(contactflow_policy.kinematics)
+    object_pose_pipeline = ObjectPosePipeline()
+    ros2_pose_source = Ros2ObjectPoseSource()
+    sim_pose_source = SimObjectPoseSource()
+
     def sync_object_state():
         if box_body_id < 0:
             return
-        needs_odom_calibration = False
-        valid = False
-        valid_rel = False
-        needs_odom_calibration = False
+
+        curr_time = time.time()
+        # 1. Update unified RobotState using state_cmd (filtered base_pos & base_quat + qpos)
+        robot_state = robot_state_provider.update_from_state_cmd(state_cmd, timestamp=curr_time)
+
+        # 2. Build PerceptionContext
+        curr_stage = getattr(contactflow_policy, "manual_stage", 0)
+        curr_phase = getattr(contactflow_policy, "current_phase_id", 11)
+        ref_phases = getattr(contactflow_policy, "ref_phase", [])
+        curr_step = getattr(contactflow_policy, "counter_step", 0)
+        if len(ref_phases) > 0:
+            curr_phase = int(ref_phases[min(curr_step, len(ref_phases) - 1)])
+
+        ctx = PerceptionContext(
+            manual_stage=curr_stage,
+            current_phase=curr_phase,
+            is_holding_object=(curr_phase >= 22 or curr_stage >= 3),
+            allow_held_object_prior=(curr_phase >= 22 or curr_stage >= 3),
+            box_half_dims=real_box_half_dims.copy(),
+        )
+
         use_vis = getattr(args, "use_vision", False)
         if use_vis and vision_receiver is not None:
-            v_pos, v_quat, valid = vision_receiver.get_validated_world_pose(m, d)
-            upper_p_rel, upper_q_rel, lower_p_rel, lower_q_rel, valid_rel = vision_receiver.get_validated_relative_poses(m, d, state_cmd)
-            g_pos, valid_goal = vision_receiver.get_validated_goal_pose(m, d)
-            if valid_goal and g_pos is not None:
-                goal_pos[:] = g_pos
-                if hasattr(contactflow_policy, "goal_pos"):
-                    contactflow_policy.goal_pos[:] = g_pos
-            
-            if sim_vision_stalled[0]:
-                valid_rel = False
-                valid = False
-                if sim_counter % 40 == 0:
-                    time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
-                    print(f"\r[{time_str}] [Vision Compare] ⌨️ V键模拟视觉断流中...   ", end="", flush=True)
-                if hasattr(contactflow_policy, "goal_pos_override") and contactflow_policy.goal_pos_override is not None:
-                    contactflow_policy.goal_pos_override[:] = g_pos
-                table_z_offset = float(contactflow_policy.box_dims[2]) + 0.005
-                table_offset = np.array([0.0, 0.0, table_z_offset], dtype=np.float32)
-                set_table_positions(init_pos - table_offset, goal_pos - table_offset)
+            # Sync Ros2ObjectPoseSource from vision_receiver
+            with vision_receiver.lock:
+                last_t_torso = vision_receiver.last_pose_torso
+                last_t_cam = vision_receiver.last_pose_cam
+                last_t_pelvis = vision_receiver.last_pose_pelvis
+                last_stamp = vision_receiver.last_time
 
-            gt_pos = d.xpos[box_body_id].copy()
-            if valid and v_pos is not None:
-                vision_cache["last_pos"] = v_pos.copy()
-                vision_cache["last_quat"] = v_quat.copy()
-                state_cmd.obj_pos = v_pos
-                state_cmd.obj_quat = v_quat
-                if sim_counter % 40 == 0:
-                    base_yaw_q = yaw_quat(state_cmd.base_quat)
-                    p_footprint = np.array([state_cmd.base_pos[0], state_cmd.base_pos[1], 0.0], dtype=np.float32)
-                    v_pos_footprint = quat_apply(quat_conjugate(base_yaw_q), v_pos - p_footprint)
-                    
-                    v_quat_footprint = quat_mul(quat_conjugate(base_yaw_q), v_quat)
-                    v_yaw_footprint = float(np.degrees(np.arctan2(
-                        2*(v_quat_footprint[0]*v_quat_footprint[3] + v_quat_footprint[1]*v_quat_footprint[2]), 
-                        1 - 2*(v_quat_footprint[2]**2 + v_quat_footprint[3]**2)
-                    )))
+            if last_t_torso is not None:
+                ros2_pose_source.update_raw_torso_pose(last_t_torso[0], last_t_torso[1], last_stamp)
+            if last_t_cam is not None:
+                ros2_pose_source.update_raw_camera_pose(last_t_cam[0], last_t_cam[1], last_stamp)
+            if last_t_pelvis is not None:
+                ros2_pose_source.update_raw_pelvis_pose(last_t_pelvis[0], last_t_pelvis[1], last_stamp)
 
-                    time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
-                    print(f"\r[{time_str}] [Vision Realtime] 相对于机器人: X={v_pos_footprint[0]:.2f}m, Y={v_pos_footprint[1]:.2f}m, Z={v_pos_footprint[2]:.2f}m | 相对朝向: {v_yaw_footprint:.1f}°   ", end="", flush=True)
-            else:
-                if real_robot is not None and vision_cache["last_pos"] is not None:
-                    state_cmd.obj_pos = vision_cache["last_pos"].copy()
-                    state_cmd.obj_quat = vision_cache["last_quat"].copy()
-                    if sim_counter % 40 == 0:
-                        time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
-                        print(f"\r[{time_str}] [Vision Compare]  视觉丢帧/遮挡！真机已自动保持上次有效位姿", end="", flush=True)
-                else:
-                    state_cmd.obj_pos = gt_pos
-                    state_cmd.obj_quat = d.xquat[box_body_id].copy()
-                    needs_odom_calibration = True
-                    if sim_counter % 40 == 0:
-                        time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
-                        print(f"\r[{time_str}] [Vision Compare] 等待视觉 AprilTag 位姿解算输入 (暂用GT)   ", end="", flush=True)
-
-            if valid_rel:
-                setattr(contactflow_policy, "is_vision_stalled", False)
-                if upper_p_rel is not None:
-                    vision_cache["last_rel_pelvis_pos"] = upper_p_rel.copy()
-                    vision_cache["last_rel_pelvis_quat"] = upper_q_rel.copy()
-                    state_cmd.rel_pelvis_pos = upper_p_rel
-                    state_cmd.rel_pelvis_quat = upper_q_rel
-                if lower_p_rel is not None:
-                    vision_cache["last_rel_torso_pos"] = lower_p_rel.copy()
-                    vision_cache["last_rel_torso_quat"] = lower_q_rel.copy()
-                    state_cmd.rel_torso_pos = lower_p_rel
-                    state_cmd.rel_torso_quat = lower_q_rel
-                state_cmd.use_direct_rel_poses = True
-            else:
-                if real_robot is not None and vision_cache.get("last_rel_pelvis_pos") is not None:
-                    setattr(contactflow_policy, "is_vision_stalled", True)
-                    state_cmd.rel_pelvis_pos = vision_cache["last_rel_pelvis_pos"].copy()
-                    state_cmd.rel_pelvis_quat = vision_cache["last_rel_pelvis_quat"].copy()
-                    if vision_cache.get("last_rel_torso_pos") is not None:
-                        state_cmd.rel_torso_pos = vision_cache["last_rel_torso_pos"].copy()
-                        state_cmd.rel_torso_quat = vision_cache["last_rel_torso_quat"].copy()
-                    state_cmd.use_direct_rel_poses = True
-                else:
-                    state_cmd.use_direct_rel_poses = False
+            measurements = ros2_pose_source.get_measurements()
         else:
-            state_cmd.use_direct_rel_poses = False
+            # Simulation Mode: SimObjectPoseSource generates GT measurement using raw MuJoCo torso pose
+            gt_box_world_pos = d.xpos[box_body_id].copy()
+            gt_box_world_quat = d.xquat[box_body_id].copy()
+            torso_id = body_id("torso_link")
+            raw_torso_pos = d.xpos[torso_id].copy() if torso_id >= 0 else robot_state.link_poses[FRAME_TORSO_LINK].pos
+            raw_torso_quat = d.xquat[torso_id].copy() if torso_id >= 0 else robot_state.link_poses[FRAME_TORSO_LINK].quat
+            measurements = sim_pose_source.update_from_mujoco_gt(
+                gt_box_world_pos, gt_box_world_quat, raw_torso_pos, raw_torso_quat, timestamp=curr_time
+            )
+
+        if sim_vision_stalled[0]:
+            measurements = {}
+
+        # 3. Update ObjectPosePipeline
+        pose_state = object_pose_pipeline.update(measurements, robot_state, ctx)
+
+        # 4. Write output to state_cmd (Single Source of Truth for Policy & CFgen)
+        state_cmd.obj_pos = pose_state.obj_pos_world.copy()
+        state_cmd.obj_quat = pose_state.obj_quat_world.copy()
+        state_cmd.rel_pelvis_pos = pose_state.obj_pos_pelvis.copy()
+        state_cmd.rel_pelvis_quat = pose_state.obj_quat_pelvis.copy()
+        state_cmd.rel_torso_pos = pose_state.obj_pos_torso_yaw.copy()
+        state_cmd.rel_torso_quat = pose_state.obj_quat_torso_yaw.copy()
+        state_cmd.use_direct_rel_poses = pose_state.valid
+        state_cmd.object_pose_state = pose_state
+
+        # Update contactflow_policy flags
+        setattr(contactflow_policy, "is_vision_stalled", not pose_state.valid)
+
+        # Log Pipeline Diagnostics and World Consistency
+        if sim_counter % 80 == 0:
+            pelvis_pose = robot_state.link_poses[FRAME_PELVIS_LINK]
+            torso_yaw_pose = robot_state.link_poses[FRAME_TORSO_YAW]
             
-            # 纯仿真下模拟视觉断流：不更新绝对坐标，使用上一帧缓存的坐标
-            if sim_vision_stalled[0]:
-                setattr(contactflow_policy, "is_vision_stalled", True)
-                if vision_cache.get("last_pos") is not None:
-                    state_cmd.obj_pos = vision_cache["last_pos"].copy()
-                    state_cmd.obj_quat = vision_cache["last_quat"].copy()
-                else:
-                    state_cmd.obj_pos = d.xpos[box_body_id].copy()
-                    state_cmd.obj_quat = d.xquat[box_body_id].copy()
-            else:
-                setattr(contactflow_policy, "is_vision_stalled", False)
-                if real_robot is not None and vision_cache.get("last_pos") is not None:
-                    state_cmd.obj_pos = vision_cache["last_pos"].copy()
-                    state_cmd.obj_quat = vision_cache["last_quat"].copy()
-                else:
-                    state_cmd.obj_pos = d.xpos[box_body_id].copy()
-                    state_cmd.obj_quat = d.xquat[box_body_id].copy()
-                    vision_cache["last_pos"] = state_cmd.obj_pos.copy()
-                    vision_cache["last_quat"] = state_cmd.obj_quat.copy()
-                
-            needs_odom_calibration = True
+            obj_world_from_pelvis = pelvis_pose.pos + quat_apply(pelvis_pose.quat, state_cmd.rel_pelvis_pos)
+            obj_world_from_torso_yaw = torso_yaw_pose.pos + quat_apply(torso_yaw_pose.quat, state_cmd.rel_torso_pos)
+            
+            res_pelvis_cm = float(np.linalg.norm(obj_world_from_pelvis - state_cmd.obj_pos) * 100.0)
+            res_torso_cm = float(np.linalg.norm(obj_world_from_torso_yaw - state_cmd.obj_pos) * 100.0)
 
-        # 模拟z方向视觉偏差
-        # if real_robot is None:
-        #     state_cmd.obj_pos[2] += 0.10
+            time_str = __import__('datetime').datetime.now().strftime('%H:%M:%S.%f')[:-3]
+            diag = pose_state.diagnostics
+            z_diff = diag.get("pelvis_torso_z_diff", 0.0)
+            valid_str = "VALID" if pose_state.valid else "INVALID"
+            stamp_ms = pose_state.stamp_delta * 1000.0
+            
+            curr_stage = getattr(contactflow_policy, "manual_stage", 0)
+            curr_phase = getattr(contactflow_policy, "current_phase_id", 11)
 
-        curr_step = getattr(contactflow_policy, "counter_step", 0)
-        ref_phases = getattr(contactflow_policy, "ref_phase", [])
-        current_phase_id = int(ref_phases[min(curr_step, len(ref_phases) - 1)]) if (hasattr(contactflow_policy, "ref_phase") and len(ref_phases) > 0) else 0
-
-        is_carrying_or_standing = (current_phase_id >= 22)
-        is_sim_forced_loss = False
-
-        if is_carrying_or_standing and (is_sim_forced_loss or ((use_vis or real_robot is not None) and (not valid_rel or not valid))):
-            approx_rel_pelvis_pos = np.array([0.234, -0.010, 0.116], dtype=np.float32)
-            approx_rel_pelvis_quat = np.array([0.998, -0.020, 0.035, -0.016], dtype=np.float32)
-            approx_rel_torso_pos = np.array([0.225, -0.006, 0.113], dtype=np.float32)
-            approx_rel_torso_quat = np.array([0.998, -0.025, -0.057, 0.000], dtype=np.float32)
-
-            state_cmd.rel_pelvis_pos = approx_rel_pelvis_pos.copy()
-            state_cmd.rel_pelvis_quat = approx_rel_pelvis_quat.copy()
-            state_cmd.rel_torso_pos = approx_rel_torso_pos.copy()
-            state_cmd.rel_torso_quat = approx_rel_torso_quat.copy()
-            state_cmd.use_direct_rel_poses = True
-
-            base_p = np.asarray(state_cmd.base_pos, dtype=np.float32).reshape(3)
+            # Calculate obj/robot based on base yaw
             base_q = np.asarray(state_cmd.base_quat, dtype=np.float32).reshape(4)
-            state_cmd.obj_pos = (base_p + quat_apply(base_q, approx_rel_pelvis_pos)).astype(np.float32)
-            state_cmd.obj_quat = quat_mul(base_q, approx_rel_pelvis_quat).astype(np.float32)
-            needs_odom_calibration = False
+            base_p = np.asarray(state_cmd.base_pos, dtype=np.float32).reshape(3)
+            inv_yaw_q = quat_conjugate(yaw_quat(base_q))
+            obj_robot = quat_apply(inv_yaw_q, state_cmd.obj_pos - base_p)
+            obj_robot_xy = float(np.linalg.norm(obj_robot[:2]))
 
-            if sim_counter % 30 == 0:
-                mode_str = "[Sim 仿真模拟Tag丢失]" if is_sim_forced_loss else "[Real 实际Tag丢失兜底]"
-                print(f"\n{mode_str} (Phase {current_phase_id}) 抱箱站立后启用 OmniContact_readme.txt 近似值 -> rel_pelvis: {approx_rel_pelvis_pos.tolist()}")
+            # Calculate goal/robot based on base yaw
+            goal_p = current_goal_pos()
+            goal_robot = quat_apply(inv_yaw_q, goal_p - base_p)
+            goal_robot_xy = float(np.linalg.norm(goal_robot[:2]))
+            obj_goal_xy = float(np.linalg.norm(state_cmd.obj_pos[:2] - goal_p[:2]))
+            
+            # Calculate obj/torso (CF-Tracker input)
+            obj_torso_xy = float(np.linalg.norm(state_cmd.rel_torso_pos[:2]))
+
+            print(
+                f"\n[{time_str}] [Perception] {valid_str} | src={pose_state.source_id} | stage={curr_stage} phase={curr_phase}\n"
+                f"  obj/world   x={state_cmd.obj_pos[0]:+.3f}m y={state_cmd.obj_pos[1]:+.3f}m z={state_cmd.obj_pos[2]:+.3f}m\n"
+                f"  obj/robot   x={obj_robot[0]:+.3f}m y={obj_robot[1]:+.3f}m xy={obj_robot_xy:0.3f}m z={obj_robot[2]:+.3f}m\n"
+                f"  obj/torso   x={state_cmd.rel_torso_pos[0]:+.3f}m y={state_cmd.rel_torso_pos[1]:+.3f}m xy={obj_torso_xy:0.3f}m z={state_cmd.rel_torso_pos[2]:+.3f}m\n"
+                f"  goal/robot  x={goal_robot[0]:+.3f}m y={goal_robot[1]:+.3f}m xy={goal_robot_xy:0.3f}m obj_goal_xy_err={obj_goal_xy:0.3f}m\n"
+                f"  world_res   pelvis={res_pelvis_cm:.4f}cm torso_yaw={res_torso_cm:.4f}cm pelvis_torso_zdiff={z_diff*100:+.2f}cm stamp={stamp_ms:.0f}ms",
+                flush=True,
+            )
 
         if should_apply_replan_object_quat_offset():
             state_cmd.obj_quat = quat_mul(
@@ -974,19 +966,6 @@ if __name__ == "__main__":
                 state_cmd.obj_quat.astype(np.float32),
             ).astype(np.float32)
             state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
-
-        if needs_odom_calibration:
-            if odom_calibration["initial_pos_xy"] is not None:
-                state_cmd.obj_pos[0] -= odom_calibration["initial_pos_xy"][0]
-                state_cmd.obj_pos[1] -= odom_calibration["initial_pos_xy"][1]
-            if odom_calibration.get("initial_pos_z") is not None:
-                state_cmd.obj_pos[2] = (state_cmd.obj_pos[2] - odom_calibration["initial_pos_z"]) + m.qpos0[2]
-            if odom_calibration["initial_yaw_quat"] is not None:
-                rel_vec = state_cmd.obj_pos - state_cmd.base_pos
-                rel_vec_rot = quat_apply(quat_conjugate(odom_calibration["initial_yaw_quat"]), rel_vec)
-                state_cmd.obj_pos = state_cmd.base_pos + rel_vec_rot
-                state_cmd.obj_quat = quat_mul(quat_conjugate(odom_calibration["initial_yaw_quat"]), state_cmd.obj_quat).astype(np.float32)
-                state_cmd.obj_quat /= max(float(np.linalg.norm(state_cmd.obj_quat)), 1e-8)
 
     def replan_from_current_state(min_dist: float, in_contact: bool, obj_lin_speed: float, obj_ang_speed: float):
         if not wtac_carrybox_replan_enabled():
@@ -1130,7 +1109,11 @@ if __name__ == "__main__":
                 # 【核心：手柄确认后，触发下一分段的同时实时刷新机器和物体定位】
                 sync_robot_state()
                 sync_object_state()
-                contactflow_policy.trigger_next_manual_stage()
+                pose_state = getattr(state_cmd, "object_pose_state", None)
+                if pose_state is not None and (not pose_state.valid or pose_state.source_id.startswith("fallback") or pose_state.source_id == "none"):
+                    print(f"\n[Stage 1 Blocked]  视觉/感知状态无效 ({pose_state.valid_reason}, source={pose_state.source_id})，拒绝进入 Stage 1 规划！")
+                else:
+                    contactflow_policy.trigger_next_manual_stage()
 
         if FSM_controller.cur_policy.name == FSMStateName.LOCOMODE or state_cmd.skill_cmd == FSMCommand.LOCO:
             max_lin_vel = 0.5
@@ -1293,7 +1276,10 @@ if __name__ == "__main__":
             lab2mj_policy = getattr(contactflow_policy, "lab2mj", None)
             if lab2mj_policy is not None and dof_pos.shape[1] == len(lab2mj_policy):
                 dof_pos = dof_pos[:, lab2mj_policy]
-            curr_idx = min(contactflow_policy.counter_step, len(dof_pos) - 1)
+            if preview_mode and FSM_controller.cur_policy is contactflow_policy:
+                curr_idx = min(preview_index, len(dof_pos) - 1)
+            else:
+                curr_idx = min(contactflow_policy.counter_step, len(dof_pos) - 1)
             ghost_base_pose = np.concatenate(
                 [
                     contactflow_policy.ref_base_pos[curr_idx],
@@ -1315,14 +1301,39 @@ if __name__ == "__main__":
         d.qpos[ghost_robot_joint_qpos_adrs[:count][valid]] = ghost_q[:count][valid]
 
     def update_reference_visualization():
-        set_mocap_pose("l_wrist", wrist_state[0:7])
-        set_mocap_pose("r_wrist", wrist_state[7:14])
-        set_mocap_pose("torso", torso_goal)
-        set_mocap_pose("l_ankle", l_ankle_goal)
-        set_mocap_pose("r_ankle", r_ankle_goal)
+        global preview_mode, preview_index
+        l_wrist_p = wrist_state[0:7]
+        r_wrist_p = wrist_state[7:14]
+        t_goal = torso_goal
+        l_ankle_g = l_ankle_goal
+        r_ankle_g = r_ankle_goal
+        c_state = contact_state
+        
+        if preview_mode and FSM_controller.cur_policy is contactflow_policy:
+            total_frames = len(getattr(contactflow_policy, "ref_base_pos", []))
+            if total_frames > 0:
+                idx = min(preview_index, total_frames - 1)
+                if hasattr(contactflow_policy, "ref_left_wrist_pos"):
+                    l_wrist_p = np.concatenate([contactflow_policy.ref_left_wrist_pos[idx], contactflow_policy.ref_left_wrist_quat[idx]])
+                if hasattr(contactflow_policy, "ref_right_wrist_pos"):
+                    r_wrist_p = np.concatenate([contactflow_policy.ref_right_wrist_pos[idx], contactflow_policy.ref_right_wrist_quat[idx]])
+                if hasattr(contactflow_policy, "ref_torso_future_pos"):
+                    t_goal = np.concatenate([contactflow_policy.ref_torso_future_pos[idx], contactflow_policy.ref_torso_future_quat[idx]])
+                if hasattr(contactflow_policy, "ref_left_ankle_future_pos"):
+                    l_ankle_g = np.concatenate([contactflow_policy.ref_left_ankle_future_pos[idx], contactflow_policy.ref_left_ankle_future_quat[idx]])
+                if hasattr(contactflow_policy, "ref_right_ankle_future_pos"):
+                    r_ankle_g = np.concatenate([contactflow_policy.ref_right_ankle_future_pos[idx], contactflow_policy.ref_right_ankle_future_quat[idx]])
+                if hasattr(contactflow_policy, "ref_contact"):
+                    c_state = contactflow_policy.ref_contact[idx]
+
+        set_mocap_pose("l_wrist", l_wrist_p)
+        set_mocap_pose("r_wrist", r_wrist_p)
+        set_mocap_pose("torso", t_goal)
+        set_mocap_pose("l_ankle", l_ankle_g)
+        set_mocap_pose("r_ankle", r_ankle_g)
         update_ghost_robot_visualization()
 
-        for geom, contact in zip(ref_contact_geom_ids, contact_state):
+        for geom, contact in zip(ref_contact_geom_ids, c_state):
             m.geom_rgba[geom] = reference_red if contact >= 0.5 else reference_yellow
 
     log_file_path = os.path.join(PROJECT_ROOT, "object_pose_logging_stand_test.txt")
@@ -1335,7 +1346,7 @@ if __name__ == "__main__":
         f.write("# ------------------------------------------------------------------\n\n")
 
     def key_callback(keycode):
-        global is_hanging
+        global is_hanging, preview_mode, preview_index
         # 键盘 V 键：模拟视觉断流
         if keycode in (118, 86):
             sim_vision_stalled[0] = not sim_vision_stalled[0]
@@ -1349,19 +1360,23 @@ if __name__ == "__main__":
             print(f"[key_callback] ⌨️ 键盘按下 Z，当前仿真机器人状态切换为: {status}")
         # 键盘 1 / S 键：切入 DefaultPose (POS_RESET)
         if keycode in (49, 115, 83):
+            preview_mode = False
             request_skill(FSMCommand.POS_RESET)
             print("[key_callback] ⌨️ 键盘按下 1/S，下发 POS_RESET -> 切入 DefaultPose")
         # 键盘 2 / L 键：切入 LocoMode
         elif keycode in (50, 108, 76):
+            preview_mode = False
             request_skill(FSMCommand.LOCO)
             print("[key_callback] ⌨️ 键盘按下 2/L，下发 LOCO -> LocoMode")
         # 键盘 3 / O / A 键：切入 SKILL_OmniContact (Stage 0 预备默认站立姿态保持)
         elif keycode in (51, 111, 79, 97, 65):
+            preview_mode = False
             reset_replan_session()
             request_skill(FSMCommand.SKILL_OmniContact, reset_env)
             print("[key_callback] ⌨️ 键盘按下 3/O/A，下发 SKILL_OmniContact -> Stage 0 理想站立态")
         # 键盘 0 / P 键：切入 PassiveMode
         elif keycode in (48, 112, 80):
+            preview_mode = False
             request_skill(FSMCommand.PASSIVE)
             print("[key_callback] ⌨️ 键盘按下 0/P，下发 PASSIVE -> PassiveMode")
         # 键盘空格 / 回车 / Y / B / N / M 键：Stage 0 站好调整完毕后触发重新规划轨迹与执行 (Stage 1)
@@ -1369,7 +1384,51 @@ if __name__ == "__main__":
             if FSM_controller.cur_policy is contactflow_policy and hasattr(contactflow_policy, "trigger_next_manual_stage"):
                 sync_robot_state()
                 sync_object_state()
-                contactflow_policy.trigger_next_manual_stage()
+                pose_state = getattr(state_cmd, "object_pose_state", None)
+                if pose_state is not None and (not pose_state.valid or pose_state.source_id.startswith("fallback") or pose_state.source_id == "none"):
+                    print(f"\n[Stage 1 Blocked]  视觉/感知状态无效 ({pose_state.valid_reason}, source={pose_state.source_id})，拒绝进入 Stage 1 规划！")
+                else:
+                    contactflow_policy.trigger_next_manual_stage()
+                    if preview_mode:
+                        preview_mode = False
+                        print("\n[Preview Mode] 已触发 Stage 1，自动退出预览模式。")
+
+        # 键盘 , 和 . 键：预览 CFgen 参考轨迹 (仅在 Stage 0 时有效)
+        elif keycode in (44, 46):
+            if FSM_controller.cur_policy is contactflow_policy and getattr(contactflow_policy, "manual_stage", -1) == 0:
+                total_frames = len(getattr(contactflow_policy, "ref_base_pos", []))
+                if total_frames > 0:
+                    if not preview_mode:
+                        preview_mode = True
+                        preview_index = getattr(contactflow_policy, "counter_step", 0)
+                        print("\n[Preview Mode] 开启预览模式。实际控制将保持在 Stage 0 第 0 帧。")
+                    
+                    if keycode == 44:
+                        preview_index = max(0, preview_index - 1)
+                    elif keycode == 46:
+                        preview_index = min(total_frames - 1, preview_index + 1)
+                    
+                    cur_phase = contactflow_policy.ref_phase[preview_index] if hasattr(contactflow_policy, "ref_phase") else -1
+                    base_pos = contactflow_policy.ref_base_pos[preview_index]
+                    base_quat = contactflow_policy.ref_base_quat[preview_index]
+                    
+                    # 当前物体相对机器人 xy 距离
+                    inv_base = quat_conjugate(base_quat)
+                    obj_robot = quat_apply(inv_base, state_cmd.obj_pos - base_pos)
+                    obj_robot_xy = float(np.linalg.norm(obj_robot[:2]))
+                    
+                    # 当前目标点相对机器人 xy 距离
+                    goal_p = current_goal_pos()
+                    goal_robot = quat_apply(inv_base, goal_p - base_pos)
+                    goal_robot_xy = float(np.linalg.norm(goal_robot[:2]))
+                    
+                    print(f"[Preview] 帧: {preview_index}/{total_frames} | Phase: {int(cur_phase)} | 物体/机器人 xy: {obj_robot_xy:.3f}m | 目标/机器人 xy: {goal_robot_xy:.3f}m")
+
+        # 键盘 X 键：退出预览模式
+        elif keycode in (88, 120):
+            if preview_mode:
+                preview_mode = False
+                print("\n[Preview Mode] 退出预览模式。恢复默认可视化。")
 
     is_hanging = False
     try:

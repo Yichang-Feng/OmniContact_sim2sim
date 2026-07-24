@@ -26,7 +26,7 @@ try:
     from geometry_msgs.msg import PoseStamped
 except ImportError:
     print("=" * 70)
-    print("[ROS2 Bridge] ❌ 无法导入 rclpy！")
+    print("[ROS2 Bridge]  无法导入 rclpy！")
     print(f"当前使用的解释器路径: {sys.executable} (Python {sys.version.split()[0]})")
     if "conda" in sys.executable.lower() or "miniconda" in sys.executable.lower() or "anaconda" in sys.executable.lower():
         print("\n⚠️  原因分析: 你当前运行在 Conda 环境中，而 Ubuntu 系统级 ROS2 是为原生 /usr/bin/python3 (Python 3.10) 编译的！")

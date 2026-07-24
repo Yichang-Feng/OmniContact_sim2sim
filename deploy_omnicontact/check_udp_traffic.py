@@ -26,14 +26,14 @@ def check_udp():
             try:
                 mreq = struct.pack("4s4s", socket.inet_aton(mcast_grp), socket.inet_aton(local_ip))
                 s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-                print(f"✅ 成功绑定端口 {port} 并加入组播组 {mcast_grp} (网卡 {local_ip})")
+                print(f" 成功绑定端口 {port} 并加入组播组 {mcast_grp} (网卡 {local_ip})")
             except Exception as e:
-                print(f"⚠️ 端口 {port} 加入组播组失败: {e}")
+                print(f" 端口 {port} 加入组播组失败: {e}")
                 
             s.settimeout(0.1)
             sockets.append((port, s))
         except Exception as e:
-            print(f"❌ 绑定端口 {port} 失败: {e}")
+            print(f" 绑定端口 {port} 失败: {e}")
             
     print("\n⏳ 正在监听 5 秒钟内的所有进入数据包...")
     start_time = time.time()

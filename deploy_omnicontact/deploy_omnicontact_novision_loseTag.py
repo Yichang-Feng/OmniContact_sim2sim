@@ -47,7 +47,7 @@ class ROS2ArucoReceiver:
             
             self.spin_thread = threading.Thread(target=lambda: rclpy.spin(self.node), daemon=True)
             self.spin_thread.start()
-            print(f"\n[ROS2ArucoReceiver] ✅ 成功启动 ROS2 监听后台线程！正在订阅以下位姿话题:\n  - {topic_cam} (优先: 相机系 /aruco/box_pose)\n  - {topic_pelvis} (次选: 骨盆系 /aruco/box_pose_pelvis)\n  - {topic_torso} (备选: 胸口系 /aruco/box_pose_torso_link)\n")
+            print(f"\n[ROS2ArucoReceiver]  成功启动 ROS2 监听后台线程！正在订阅以下位姿话题:\n  - {topic_cam} (优先: 相机系 /aruco/box_pose)\n  - {topic_pelvis} (次选: 骨盆系 /aruco/box_pose_pelvis)\n  - {topic_torso} (备选: 胸口系 /aruco/box_pose_torso_link)\n")
         except Exception as e:
             print(f"\n[ROS2ArucoReceiver] ℹ️ 原生 ROS2 节点加载失败 ({e})。自动启动 UDP 视觉桥接监听 (端口: 9876)...\n")
             self._start_udp_listener(port=9876)
@@ -59,9 +59,9 @@ class ROS2ArucoReceiver:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("0.0.0.0", port))
-                print(f"[ROS2ArucoReceiver] ✅ UDP 视觉桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 AprilTag 位姿...")
+                print(f"[ROS2ArucoReceiver]  UDP 视觉桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 AprilTag 位姿...")
             except Exception as err:
-                print(f"[ROS2ArucoReceiver] ❌ UDP 端口 {port} 绑定失败: {err}")
+                print(f"[ROS2ArucoReceiver]  UDP 端口 {port} 绑定失败: {err}")
                 return
             while True:
                 try:
@@ -863,31 +863,7 @@ if __name__ == "__main__":
         # 2. 仿真 (real_robot is None) 时，从机器人抱起箱子站起来后立刻主动丢弃/忽略箱子坐标
         is_sim_forced_loss = (real_robot is None) and is_carrying_or_standing
 
-        # 3. 仅当满足 [(current_phase_id >= 22) 且 (视野丢失: not valid_rel/not valid 或是仿真强制模拟 is_sim_forced_loss)] 两个条件时，
-        #    才统一传入 ~/Desktop/OmniContact_readme.txt 中“正常抱箱子行走时的相对位置”固定经验值：
-        #    - ROS2 骨盆系相对值 (平均近似): Pos [0.234, -0.010, 0.116] | Quat [0.998, -0.020, 0.035, -0.016]
-        #    - ROS2 胸腔系相对值 (平均近似): Pos [0.225, -0.006, 0.113] | Quat [0.998, -0.025, -0.057, 0.000]
-        if is_carrying_or_standing and (is_sim_forced_loss or not valid_rel or not valid):
-            approx_rel_pelvis_pos = np.array([0.234, -0.010, 0.116], dtype=np.float32)
-            approx_rel_pelvis_quat = np.array([0.998, -0.020, 0.035, -0.016], dtype=np.float32)
-            approx_rel_torso_pos = np.array([0.225, -0.006, 0.113], dtype=np.float32)
-            approx_rel_torso_quat = np.array([0.998, -0.025, -0.057, 0.000], dtype=np.float32)
 
-            state_cmd.rel_pelvis_pos = approx_rel_pelvis_pos.copy()
-            state_cmd.rel_pelvis_quat = approx_rel_pelvis_quat.copy()
-            state_cmd.rel_torso_pos = approx_rel_torso_pos.copy()
-            state_cmd.rel_torso_quat = approx_rel_torso_quat.copy()
-            state_cmd.use_direct_rel_poses = True
-
-            # 严格依据骨盆位姿 + 近似相对位姿推算出全局绝对坐标，防止到底层仍使用陈旧/错误的绝对坐标
-            base_p = np.asarray(state_cmd.base_pos, dtype=np.float32).reshape(3)
-            base_q = np.asarray(state_cmd.base_quat, dtype=np.float32).reshape(4)
-            state_cmd.obj_pos = (base_p + quat_apply(base_q, approx_rel_pelvis_pos)).astype(np.float32)
-            state_cmd.obj_quat = quat_mul(base_q, approx_rel_pelvis_quat).astype(np.float32)
-
-            if sim_counter % 30 == 0:
-                mode_str = "[Sim 仿真模拟Tag丢失]" if is_sim_forced_loss else "[Real 实际Tag丢失兜底]"
-                print(f"\n{mode_str} (Phase {current_phase_id}) 抱箱站立后启用 OmniContact_readme.txt 近似值 -> rel_pelvis: {approx_rel_pelvis_pos.tolist()}")
 
         if should_apply_replan_object_quat_offset():
             # Re-anchor a dropped box to a yaw-only baseline while keeping later relative in-hand tilt cues.

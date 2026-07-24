@@ -11,15 +11,15 @@
 ----------------------------------------------------------------------------------------------------
 状态字段 / 物理维度       | 仿真获取来源 (MuJoCo)          | 实机获取来源 (Unitree SDK / DDS)   | 对齐一致性与现状评估
 -------------------------+--------------------------------+------------------------------------+-----------------------------------
-1. 关节角度 (q)          | d.qpos[7 : 7+num_joints]       | LowState_.motor_state[i].q()       | ✅ 完全一致
-2. 关节角速度 (dq)        | d.qvel[6 : 6+num_joints]       | LowState_.motor_state[i].dq()      | ✅ 完全一致
+1. 关节角度 (q)          | d.qpos[7 : 7+num_joints]       | LowState_.motor_state[i].q()       |  完全一致
+2. 关节角速度 (dq)        | d.qvel[6 : 6+num_joints]       | LowState_.motor_state[i].dq()      |  完全一致
 3. 关节角加速度 (ddq)     | np.zeros (未填充)               | LowState_.motor_state[i].ddq()     | ⚠️ 实机有数据但被丢弃(未传入策略)
 4. 关节输出力矩 (tau_est) | np.zeros (未填充)               | LowState_.motor_state[i].tau_est() | ⚠️ 实机有数据但被丢弃(未传入策略)
-5. 重力向量 (gravity_ori)| 从 d.qpos[3:7] 真理四元数解算  | 从 imu_state().quaternion() 解算   | ✅ 完全一致
-6. 陀螺仪角速度 (ang_vel)| d.qvel[3:6] 真理角速度         | imu_state().gyroscope()            | ✅ 完全一致
-7. IMU四元数 (base_quat) | d.qpos[3:7] 物理绝对姿态       | imu_state().quaternion()           | ✅ 已修复：开机锁初始偏航，保留转弯角
-8. 基座世界坐标(base_pos)| d.qpos[:3] 物理绝对真理位置    | rt/odommodestate -> position()     | ✅ 已修复：接入DDS里程计+开机XY锚定
-9. 基座线速度 (lin_vel)  | d.qvel[0:3] 物理真理线速度     | rt/odommodestate -> velocity()     | ✅ 已修复：接入DDS里程计实时反馈
+5. 重力向量 (gravity_ori)| 从 d.qpos[3:7] 真理四元数解算  | 从 imu_state().quaternion() 解算   |  完全一致
+6. 陀螺仪角速度 (ang_vel)| d.qvel[3:6] 真理角速度         | imu_state().gyroscope()            |  完全一致
+7. IMU四元数 (base_quat) | d.qpos[3:7] 物理绝对姿态       | imu_state().quaternion()           |  已修复：开机锁初始偏航，保留转弯角
+8. 基座世界坐标(base_pos)| d.qpos[:3] 物理绝对真理位置    | rt/odommodestate -> position()     |  已修复：接入DDS里程计+开机XY锚定
+9. 基座线速度 (lin_vel)  | d.qvel[0:3] 物理真理线速度     | rt/odommodestate -> velocity()     |  已修复：接入DDS里程计实时反馈
 10.单物体目标 (obj_pos)  | d.xpos[box_body_id] 真理坐标   | RealSense 视觉节点 AprilTag 解算    | 🔄 依赖视觉节点输入，无视觉时退化为0
 11.单物体姿态 (obj_quat) | d.xquat[box_body_id] 真理姿态  | RealSense 视觉节点 AprilTag 解算    | 🔄 依赖视觉节点输入，无视觉时退化
 12.多物体链式任务坐标:   |                                |                                    |
@@ -27,7 +27,7 @@
    - carry_box_pos       | d.xpos[carry_box_id] 真理坐标  | 彻底缺失 (永远为 np.zeros)         | 🚨 严重疏漏！实机部署完全未绑定！
    - stack_box_pos       | d.xpos[stack_box_id] 真理坐标  | 彻底缺失 (永远为 np.zeros)         | 🚨 严重疏漏！实机部署完全未绑定！
    - ball_pos            | d.xpos[ball_id] 真理坐标       | 彻底缺失 (永远为 np.zeros)         | 🚨 严重疏漏！实机部署完全未绑定！
-13.足端触觉 (contact)    | 接触传感器 / 碰撞检测解算      | 硬件无触觉传感器，退化为参考轨迹步态| ✅ 两端策略均不过赖触觉传感器
+13.足端触觉 (contact)    | 接触传感器 / 碰撞检测解算      | 硬件无触觉传感器，退化为参考轨迹步态|  两端策略均不过赖触觉传感器
 
 ----------------------------------------------------------------------------------------------------
 二、 深度剖析：核心发现与隐患疏漏

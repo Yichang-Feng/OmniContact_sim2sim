@@ -24,6 +24,7 @@ from policy.omnicontact.CFgen_stage_plans import (
 
 
 SINGLE_OBJECT_CFGEN_TASKS = {
+    "carrybox": ("box", CfGenCarryBox),
     "loco": (None, CfGenLoco),
     "pushbox-two": ("box", CfGenPushBoxTwoSides),
     "pushbox-in": ("box", CfGenPushBoxInnerSide),
@@ -130,16 +131,17 @@ def _should_skip_first_stage(policy: Any) -> bool:
 
 
 def plan_cfgen_reference(policy: Any, fk_info: dict) -> None:
+    task = str(getattr(policy, "task", "carrybox")).strip()
     plan_goal = policy.goal_pos.copy()
 
-    staged_plan_fn = STAGED_CFGEN_TASKS.get(policy.task)
+    staged_plan_fn = STAGED_CFGEN_TASKS.get(task)
     if staged_plan_fn is not None:
         plan, traj_data, target_yaw = staged_plan_fn(policy, fk_info)
         plan_goal = plan["goal"]
         commit_cfgen_reference(policy, traj_data, target_yaw, plan_goal)
         return
 
-    object_profile, cfgen_cls = SINGLE_OBJECT_CFGEN_TASKS.get(policy.task, (None, CfGenCarryBox))
+    object_profile, cfgen_cls = SINGLE_OBJECT_CFGEN_TASKS.get(task, ("box", CfGenCarryBox))
     if object_profile is not None:
         set_active_object_profile(policy, object_profile, policy.box_dims)
 
@@ -161,15 +163,16 @@ def plan_cfgen_reference(policy: Any, fk_info: dict) -> None:
         box_half_dims=policy.box_dims,
         target_obj_pos=plan_goal,
     )
-    if policy.task in SLIDEBOX_TASKS:
-        generate_kwargs["task"] = policy.task
+    if task in SLIDEBOX_TASKS:
+        generate_kwargs["task"] = task
 
     traj_data, target_yaw = policy.traj_generator.generate(**generate_kwargs)
     commit_cfgen_reference(policy, traj_data, target_yaw, plan_goal)
 
 
 def initialize_cfgen_reference(policy: Any, fk_info: dict) -> None:
-    if policy.task == "push-carry":
+    task = str(getattr(policy, "task", "carrybox")).strip()
+    if task == "push-carry":
         if _should_skip_first_stage(policy):
             policy.push_carry_stage = policy.push_carry_cfgen.CARRY_STAGE
             set_active_object_profile(policy, "carry_box", policy.carry_box_dims)
@@ -177,7 +180,7 @@ def initialize_cfgen_reference(policy: Any, fk_info: dict) -> None:
         else:
             policy.push_carry_stage = policy.push_carry_cfgen.PUSH_STAGE
             set_active_object_profile(policy, "push_box", policy.push_box_dims)
-    elif policy.task == "carry-push":
+    elif task == "carry-push":
         if _should_skip_first_stage(policy):
             policy.push_carry_stage = policy.carry_push_cfgen.PUSH_STAGE
             set_active_object_profile(policy, "push_box", policy.push_box_dims)
@@ -185,7 +188,7 @@ def initialize_cfgen_reference(policy: Any, fk_info: dict) -> None:
         else:
             policy.push_carry_stage = policy.carry_push_cfgen.CARRY_STAGE
             set_active_object_profile(policy, "carry_box", policy.carry_box_dims)
-    elif policy.task == "push-relocate":
+    elif task == "push-relocate":
         if _should_skip_first_stage(policy):
             policy.push_relocate_stage = policy.push_relocate_cfgen.RELOCATE_STAGE
             set_active_object_profile(policy, "ball", policy.ball_dims)
@@ -193,8 +196,10 @@ def initialize_cfgen_reference(policy: Any, fk_info: dict) -> None:
         else:
             policy.push_relocate_stage = policy.push_relocate_cfgen.PUSH_STAGE
             set_active_object_profile(policy, "push_box", policy.push_box_dims)
-    elif policy.task in {"stackbox", "carry-carry", "carry-carry-carry"}:
+    elif task in {"stackbox", "carry-carry", "carry-carry-carry"}:
         policy.stackbox_stage_idx = 0
-        policy.stackbox_stage_count = 2 if policy.task == "carry-carry" else 3
+        policy.stackbox_stage_count = 2 if task == "carry-carry" else 3
+    else:
+        print(f"[CFgen] Task '{task}': initializing single object reference via plan_cfgen_reference().")
 
     plan_cfgen_reference(policy, fk_info)

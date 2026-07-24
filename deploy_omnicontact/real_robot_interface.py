@@ -126,7 +126,7 @@ class RealRobotInterfacePy:
                 self.ros2_node.create_subscription(Odometry, topic_name, self._ros2_odom_handler, 10)
                 self.ros2_thread = threading.Thread(target=lambda: rclpy.spin(self.ros2_node), daemon=True)
                 self.ros2_thread.start()
-                print(f"[RealRobotInterface] ✅ 成功建立 ROS2 订阅后台线程: {topic_name}")
+                print(f"[RealRobotInterface]  成功建立 ROS2 订阅后台线程: {topic_name}")
         except Exception as e:
             print(f"[RealRobotInterface] ℹ️ 原生 ROS2 订阅未启动 ({e})。自动启动 UDP 里程计桥接监听 (端口: 9877)...")
             self._start_udp_odom_listener(port=9877)
@@ -138,9 +138,9 @@ class RealRobotInterfacePy:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("0.0.0.0", port))
-                print(f"[RealRobotInterface] ✅ UDP 里程计桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 /lio/odom...")
+                print(f"[RealRobotInterface]  UDP 里程计桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 /lio/odom...")
             except Exception as err:
-                print(f"[RealRobotInterface] ❌ UDP 端口 {port} 绑定失败: {err}")
+                print(f"[RealRobotInterface]  UDP 端口 {port} 绑定失败: {err}")
                 return
             while True:
                 try:
@@ -179,7 +179,7 @@ class RealRobotInterfacePy:
         last_print = 0.0
         while time.time() - start < timeout:
             if self.low_state is not None:
-                print("[RealRobotInterface] ✅ 成功接收到机器人底层数据帧 (rt/lowstate)！底层通信闭环就绪！")
+                print("[RealRobotInterface]  成功接收到机器人底层数据帧 (rt/lowstate)！底层通信闭环就绪！")
                 return True
             if time.time() - last_print > 2.0:
                 print("[RealRobotInterface] 正在同步监听等待机器人底层反馈 (rt/lowstate)...", flush=True)
@@ -415,7 +415,7 @@ class RealRobotInterfaceCpp:
                 self.ros2_node.create_subscription(Odometry, topic_name, self._ros2_odom_handler, 10)
                 self.ros2_thread = threading.Thread(target=lambda: rclpy.spin(self.ros2_node), daemon=True)
                 self.ros2_thread.start()
-                print(f"[RealRobotInterfaceCpp] ✅ 成功建立 ROS2 订阅后台线程: {topic_name}")
+                print(f"[RealRobotInterfaceCpp]  成功建立 ROS2 订阅后台线程: {topic_name}")
         except Exception as e:
             print(f"[RealRobotInterfaceCpp] ℹ️ 原生 ROS2 订阅未启动 ({e})。自动启动 UDP 里程计桥接监听 (端口: 9877)...")
             self._start_udp_odom_listener(port=9877)
@@ -427,9 +427,9 @@ class RealRobotInterfaceCpp:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("0.0.0.0", port))
-                print(f"[RealRobotInterfaceCpp] ✅ UDP 里程计桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 /lio/odom...")
+                print(f"[RealRobotInterfaceCpp]  UDP 里程计桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 /lio/odom...")
             except Exception as err:
-                print(f"[RealRobotInterfaceCpp] ❌ UDP 端口 {port} 绑定失败: {err}")
+                print(f"[RealRobotInterfaceCpp]  UDP 端口 {port} 绑定失败: {err}")
                 return
             while True:
                 try:
@@ -481,7 +481,7 @@ try:
     so_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "cpp", "build", "libreal_robot_interface_cpp.so"))
     if os.path.exists(so_path):
         RealRobotInterface = RealRobotInterfaceCpp
-        print("[real_robot_interface] ✅ 已自动选用 C++ 底层 DDS 高性能驱动端点！")
+        print("[real_robot_interface]  已自动选用 C++ 底层 DDS 高性能驱动端点！")
     else:
         RealRobotInterface = RealRobotInterfacePy
         print("[real_robot_interface] ℹ️ 未发现 C++ 驱动库，降级采用 Python DDS 驱动端点。")

@@ -49,7 +49,7 @@ class ROS2ArucoReceiver:
             
             self.spin_thread = threading.Thread(target=lambda: rclpy.spin(self.node), daemon=True)
             self.spin_thread.start()
-            print(f"\n[ROS2ArucoReceiver] ✅ 成功启动 ROS2 监听后台线程！正在订阅以下位姿话题:\n  - {topic_cam} (优先: 相机系 /aruco/box_pose)\n  - {topic_pelvis} (次选: 骨盆系 /aruco/box_pose_pelvis)\n  - {topic_torso} (备选: 胸口系 /aruco/box_pose_torso_link)\n")
+            print(f"\n[ROS2ArucoReceiver]  成功启动 ROS2 监听后台线程！正在订阅以下位姿话题:\n  - {topic_cam} (优先: 相机系 /aruco/box_pose)\n  - {topic_pelvis} (次选: 骨盆系 /aruco/box_pose_pelvis)\n  - {topic_torso} (备选: 胸口系 /aruco/box_pose_torso_link)\n")
         except Exception as e:
             print(f"\n[ROS2ArucoReceiver] ℹ️ 原生 ROS2 节点加载失败 ({e})。自动启动 UDP 视觉桥接监听 (端口: 9876)...\n")
             self._start_udp_listener(port=9876)
@@ -61,9 +61,9 @@ class ROS2ArucoReceiver:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("0.0.0.0", port))
-                print(f"[ROS2ArucoReceiver] ✅ UDP 视觉桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 AprilTag 位姿...")
+                print(f"[ROS2ArucoReceiver]  UDP 视觉桥接监听成功！正在本地端口 {port} 等待 ros2_bridge.py 发送 AprilTag 位姿...")
             except Exception as err:
-                print(f"[ROS2ArucoReceiver] ❌ UDP 端口 {port} 绑定失败: {err}")
+                print(f"[ROS2ArucoReceiver]  UDP 端口 {port} 绑定失败: {err}")
                 return
             while True:
                 try:

@@ -43,7 +43,7 @@ try:
     profile = pipeline.start(config)
     color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
     intr = color_profile.get_intrinsics()
-    print(f"✅ 成功锁定纯 RGB 镜头！分辨率: [{intr.width}x{intr.height}] @ {color_profile.fps()}Hz | 内参 fx={intr.fx:.2f}, fy={intr.fy:.2f}")
+    print(f" 成功锁定纯 RGB 镜头！分辨率: [{intr.width}x{intr.height}] @ {color_profile.fps()}Hz | 内参 fx={intr.fx:.2f}, fy={intr.fy:.2f}")
 
     while running:
         # 增加 timeout 防止因为瞬时 USB 干扰导致 wait_for_frames 永久死锁
@@ -62,7 +62,7 @@ try:
         pub.send(f.tobytes())
 
 except Exception as e:
-    print(f"❌ 推流运行发生异常: {e}")
+    print(f" 推流运行发生异常: {e}")
 finally:
     # --- 4. 终极释放保障：无论任何情况退出，保证 100% 释放内核驱动与端口 ---
     print("[释放资源] 正在调用 pipeline.stop() 释放 RealSense 内核驱动...")
@@ -73,5 +73,5 @@ finally:
     print("[释放资源] 正在关闭 ZMQ 端口与上下文...")
     pub.close()
     ctx_zmq.term()
-    print("✅ 相机与端口已完美释放！别人现在可以直接无缝连接，无需重启机器人！")
+    print(" 相机与端口已完美释放！别人现在可以直接无缝连接，无需重启机器人！")
     sys.exit(0)

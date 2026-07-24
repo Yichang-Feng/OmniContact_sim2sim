@@ -139,6 +139,10 @@ class OmniContact(FSMState):
 
     def _snapshot_state_cmd(self):
         src = self.state_cmd
+        rel_pelvis_p = getattr(src, "rel_pelvis_pos", None)
+        rel_pelvis_q = getattr(src, "rel_pelvis_quat", None)
+        rel_torso_p = getattr(src, "rel_torso_pos", None)
+        rel_torso_q = getattr(src, "rel_torso_quat", None)
         return SimpleNamespace(
             q=src.q.copy(),
             dq=src.dq.copy(),
@@ -154,6 +158,12 @@ class OmniContact(FSMState):
             carry_box_quat=src.carry_box_quat.copy(),
             stack_box_pos=src.stack_box_pos.copy(),
             stack_box_quat=src.stack_box_quat.copy(),
+            rel_pelvis_pos=rel_pelvis_p.copy() if rel_pelvis_p is not None else None,
+            rel_pelvis_quat=rel_pelvis_q.copy() if rel_pelvis_q is not None else None,
+            rel_torso_pos=rel_torso_p.copy() if rel_torso_p is not None else None,
+            rel_torso_quat=rel_torso_q.copy() if rel_torso_q is not None else None,
+            use_direct_rel_poses=bool(getattr(src, "use_direct_rel_poses", False)),
+            object_pose_state=getattr(src, "object_pose_state", None),
         )
 
     def _snapshot_cfgen_policy(self, state_cmd):

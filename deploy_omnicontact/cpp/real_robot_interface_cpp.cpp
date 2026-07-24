@@ -138,7 +138,7 @@ public:
         }
         if (mode_machine_ != ls->mode_machine()) {
             if (mode_machine_ == 0) {
-                std::cout << "[RealRobotInterfaceCpp] ✅ 首次锁定机器人机型识别码 (mode_machine): " << unsigned(ls->mode_machine()) << std::endl;
+                std::cout << "[RealRobotInterfaceCpp]  首次锁定机器人机型识别码 (mode_machine): " << unsigned(ls->mode_machine()) << std::endl;
             }
             mode_machine_ = ls->mode_machine();
         }
@@ -191,7 +191,7 @@ public:
             {
                 std::lock_guard<std::mutex> lock(state_mutex_);
                 if (latest_state_ != nullptr) {
-                    std::cout << "[RealRobotInterfaceCpp] ✅ 成功接收到 G1 底层数据帧 (rt/lowstate)！通信闭环完成！" << std::endl;
+                    std::cout << "[RealRobotInterfaceCpp]  成功接收到 G1 底层数据帧 (rt/lowstate)！通信闭环完成！" << std::endl;
                     return true;
                 }
             }

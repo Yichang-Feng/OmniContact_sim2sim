@@ -142,6 +142,10 @@ class OmniContactStandPrepareTest(FSMState):
 
     def _snapshot_state_cmd(self):
         src = self.state_cmd
+        rel_pelvis_p = getattr(src, "rel_pelvis_pos", None)
+        rel_pelvis_q = getattr(src, "rel_pelvis_quat", None)
+        rel_torso_p = getattr(src, "rel_torso_pos", None)
+        rel_torso_q = getattr(src, "rel_torso_quat", None)
         return SimpleNamespace(
             q=src.q.copy(),
             dq=src.dq.copy(),
@@ -157,6 +161,12 @@ class OmniContactStandPrepareTest(FSMState):
             carry_box_quat=src.carry_box_quat.copy(),
             stack_box_pos=src.stack_box_pos.copy(),
             stack_box_quat=src.stack_box_quat.copy(),
+            rel_pelvis_pos=rel_pelvis_p.copy() if rel_pelvis_p is not None else None,
+            rel_pelvis_quat=rel_pelvis_q.copy() if rel_pelvis_q is not None else None,
+            rel_torso_pos=rel_torso_p.copy() if rel_torso_p is not None else None,
+            rel_torso_quat=rel_torso_q.copy() if rel_torso_q is not None else None,
+            use_direct_rel_poses=bool(getattr(src, "use_direct_rel_poses", False)),
+            object_pose_state=getattr(src, "object_pose_state", None),
         )
 
     def _snapshot_cfgen_policy(self, state_cmd):
@@ -603,7 +613,7 @@ class OmniContactStandPrepareTest(FSMState):
                 self._is_planning_stage1 = False
                 
                 if self.success == "failure":
-                    print(f"   - ❌ 后台轨迹计算失败！停留在 Stage 0...")
+                    print(f"   -  后台轨迹计算失败！停留在 Stage 0...")
                     print(f"========================================================================================================================\n")
                 else:
                     # 规划完成后，结算步数和状态
@@ -633,7 +643,7 @@ class OmniContactStandPrepareTest(FSMState):
                     self.manual_stage = 1
                     self.counter_step = 0
                     self.enter_dof_pos = self.state_cmd.q.copy()
-                    print(f"   - ✅ 后台轨迹计算完毕！已平滑切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
+                    print(f"   -  后台轨迹计算完毕！已平滑切换至 Stage 1: Approach Object (靠近并面对物体, Phase 11~13 -> 终点 Step {self.stage_max_allowed_step.get(1, 0)})，正式出发！")
                     print(f"========================================================================================================================\n")
         # ---------------------------------
 

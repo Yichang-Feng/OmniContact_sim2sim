@@ -13,19 +13,19 @@ import threading
 
 print("=" * 70)
 print("🔍 [DDS Debug] 启动 Python 底层 DDS 深度诊断与日志捕获...")
-print(f"📌 [Python Executable]: {sys.executable}")
-print(f"📌 [Current Working Dir]: {os.getcwd()}")
-print(f"📌 [LD_LIBRARY_PATH]: {os.environ.get('LD_LIBRARY_PATH', 'Not Set')}")
+print(f" [Python Executable]: {sys.executable}")
+print(f" [Current Working Dir]: {os.getcwd()}")
+print(f" [LD_LIBRARY_PATH]: {os.environ.get('LD_LIBRARY_PATH', 'Not Set')}")
 print("=" * 70)
 
 # 1. 诊断 cyclonedds 依赖库路径
 try:
     import cyclonedds
-    print(f"✅ [cyclonedds import]: 成功，路径为: {cyclonedds.__file__}")
+    print(f" [cyclonedds import]: 成功，路径为: {cyclonedds.__file__}")
     from cyclonedds.internal import dds_c_t
-    print(f"✅ [cyclonedds c-lib]: 加载成功")
+    print(f" [cyclonedds c-lib]: 加载成功")
 except Exception as e:
-    print(f"❌ [cyclonedds import 失败]: {e}")
+    print(f" [cyclonedds import 失败]: {e}")
     sys.exit(1)
 
 # 2. 强行注入 CycloneDDS 深度追踪配置 (Verbosity=trace)
@@ -47,7 +47,7 @@ cconfig.ChannelConfigHasInterface = '''<?xml version="1.0" encoding="UTF-8" ?>
     </Domain>
 </CycloneDDS>'''
 
-print("✅ [XML Config]: 已注入 CycloneDDS 深度追踪配置 (输出路径: /tmp/cdds_debug_trace.log)")
+print(" [XML Config]: 已注入 CycloneDDS 深度追踪配置 (输出路径: /tmp/cdds_debug_trace.log)")
 
 # 3. 初始化通道工厂
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber, ChannelPublisher

@@ -10,7 +10,7 @@ def test_cpp_dds():
 
     so_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "cpp", "build", "libreal_robot_interface_cpp.so"))
     if not os.path.exists(so_path):
-        print(f"❌ 找不到动态链接库: {so_path}")
+        print(f" 找不到动态链接库: {so_path}")
         return
 
     print(f"📦 [加载动态库]: {so_path}")
@@ -43,17 +43,17 @@ def test_cpp_dds():
     print(f"⚙️ [初始化通信端点]: 网卡={net_if.decode()}, 关节数={num_joints}")
     handle = lib.init_real_robot_interface(net_if, num_joints)
     if not handle:
-        print("❌ 创建 C++ 通信句柄失败！")
+        print(" 创建 C++ 通信句柄失败！")
         return
 
     try:
         print("⏳ [同步等待 rt/lowstate]: 正在监听等待机器人底包到来 (超时时间: 15秒)...")
         connected = lib.wait_for_connection(handle, 15.0)
         if not connected:
-            print("❌ 未能在15秒内收到 rt/lowstate 数据包。请检查网络或机器人状态。")
+            print(" 未能在15秒内收到 rt/lowstate 数据包。请检查网络或机器人状态。")
             return
 
-        print("✅ [连接成功] 成功闭环接收到 rt/lowstate！")
+        print(" [连接成功] 成功闭环接收到 rt/lowstate！")
         print("📊 [数据采样采样中]: 连续读取3秒底层状态...")
 
         q_buf = (ctypes.c_float * num_joints)()
